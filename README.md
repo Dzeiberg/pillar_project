@@ -1,0 +1,1 @@
+# IGVF Coding Variant Focus Group Pillar Project
