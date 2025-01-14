@@ -24,19 +24,27 @@ class FunctionalDataset:
         if not len(dataframe):
             raise ValueError("dataframe must contain at least one row")
         self.dataframe = dataframe
-        self.variants = [self._init_variant(row) for _, row in dataframe.iterrows()]
+        variant_type = self.identify_variant_type(dataframe)
+        self.variants = [self._init_variant(row,variant_type) for _, row in dataframe.iterrows() \
+                         if not pd.isna([row.aa_pos, row.aa_ref, row.aa_alt]).all()]
         self._init_variant_sample_assignments()
 
-    def _init_variant(self, row):
-        if row.nucleotide_or_aa == "nucleotide":
+    def identify_variant_type(self, dataframe) -> str:
+        types = dataframe.nucleotide_or_aa.dropna().unique()
+        if len(types) != 1:
+            raise ValueError("dataframe must contain only one variant type")
+        return types[0]
+
+    def _init_variant(self, row,variant_type):
+        if variant_type == "nucleotide":
             return NucleotideVariant(row)
-        elif row.nucleotide_or_aa == "aa":
+        elif variant_type == "aa":
             return AminoAcidVariant(row)
         else:
             raise ValueError("nucleotide_or_aa must be either 'nucleotide' or 'aa'")
 
     def __len__(self):
-        return len(self.dataframe)
+        return len(self.variants)
 
     def _init_variant_sample_assignments(self):
         NSamples = 4 # P/LP, B/LB, gnomAD, synonymous
@@ -84,7 +92,27 @@ class Variant:
     def _init_variant_info(self, variant_info: pd.Series):
         for k, v in variant_info.items():
             setattr(self, k, v)
+        self.init_gnomad_MAF()
+        self.init_clinvar_sig()
         self.validate_variant_info()
+
+    def init_gnomad_MAF(self):
+        """
+        It is possible that the MAF is a list of values separated by a semicolon. If so, parse the list and obtain the maximum value.
+        """
+        maf_values = str(self.gnomad_MAF).split(";")
+        maf = max(pd.to_numeric(maf_values, errors='coerce'))
+        if np.isnan(maf):
+            maf = 0
+        self.gnomad_MAF = maf
+
+    def init_clinvar_sig(self):
+        """
+        Parse the list of strings, remove invalid values, and assign unique values to the clinvar_sig attribute as a set.
+        """
+        sigs = set([sig for sig in str(self.clinvar_sig).split(";") if \
+                not sig.startswith("CLNSIGCONF") and not sig.startswith("ID") and not sig.startswith("CLNHGVS")])
+        self.clinvar_sig = sigs
 
     def validate_variant_info(self):
         if not hasattr(self,'aa_ref') or self.aa_ref not in self.valid_alleles.union({"*","-"}):
@@ -101,37 +129,21 @@ class Variant:
     def present_in_gnomAD(self):
         return not pd.isna(self.gnomad_MAF) and self.gnomad_MAF > 0
     
-    def clinvar_sig_missing(self):
-        if not hasattr(self, "clinvar_sig") or self.is_nan(self.clinvar_sig):
-            return True
-        return False
     @property
-    def is_pathogenic_or_likely_pathogenic(self):
-        if self.clinvar_sig_missing():
-            return False
-        sig = self.clinvar_sig.split(";")[0]
-        return sig in {"Pathogenic","Pathogenic/Likely_pathogenic","Likely_pathogenic"}
+    def is_pathogenic_or_likely_pathogenic(self) -> bool:
+        return len(self.clinvar_sig.intersection({"Pathogenic","Pathogenic/Likely_pathogenic","Likely_pathogenic"})) > 0
 
     @property
-    def is_benign_or_likely_benign(self):
-        if self.clinvar_sig_missing():
-            return False
-        sig = self.clinvar_sig.split(";")[0]
-        return sig in {"Benign","Benign/Likely_benign","Likely_benign"}
+    def is_benign_or_likely_benign(self) -> bool:
+        return len(self.clinvar_sig.intersection({"Benign","Benign/Likely_benign","Likely_benign"})) > 0
 
     @property
-    def is_conflicting(self):
-        if self.clinvar_sig_missing():
-            return False
-        sig = self.clinvar_sig.split(";")[0]
-        return sig == "Conflicting_classifications_of_pathogenicity"
+    def is_conflicting(self) -> bool:
+        return len(self.clinvar_sig.intersection({"Conflicting_classifications_of_pathogenicity",})) > 0
 
     @property
-    def is_uncertain(self):
-        if self.clinvar_sig_missing():
-            return False
-        sig = self.clinvar_sig.split(";")[0]
-        return sig == "Uncertain_significance"
+    def is_uncertain(self) -> bool:
+        return len(self.clinvar_sig.intersection({"Uncertain_significance",})) > 0
 
     @property
     def valid_alleles(self):
