@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import logging
 
 class PillarProjectDataframe:
     def __init__(self, data_path: Path|str):
@@ -13,10 +14,16 @@ class PillarProjectDataframe:
         self.dataframe = pd.read_csv(self.data_path)
 
 class FunctionalDataset:
-    def __init__(self, dataframe: pd.DataFrame):
-        self._init_dataframe(dataframe)
+    def __init__(self, dataframe: pd.DataFrame,**kawrgs):
+        self._init_dataframe(dataframe, **kawrgs)
 
-    def _init_dataframe(self, dataframe : pd.DataFrame):
+    def _init_dataframe(self, dataframe : pd.DataFrame, **kwargs):
+        """
+        Optional Parameters
+        -------------------
+        missense_only : bool (default = False)
+            Only fit the model to missense variants
+        """
         if not isinstance(dataframe, pd.DataFrame):
             raise TypeError("dataframe must be a pandas DataFrame")
         if len(dataframe.Dataset.unique()) != 1:
@@ -26,7 +33,10 @@ class FunctionalDataset:
         self.dataframe = dataframe
         variant_type = self.identify_variant_type(dataframe)
         self.variants = [self._init_variant(row,variant_type) for _, row in dataframe.iterrows() \
-                         if not pd.isna([row.aa_pos, row.aa_ref, row.aa_alt]).all()]
+                         if not pd.isna([row.aa_pos, row.aa_ref, row.aa_alt]).all() and \
+                            not pd.isna(row.auth_reported_score)]
+        if kwargs.get("missense_only",False):
+            self.variants = [variant for variant in self.variants if variant.is_missense or variant.is_synonymous]
         self._init_variant_sample_assignments()
 
     def identify_variant_type(self, dataframe) -> str:
@@ -47,7 +57,11 @@ class FunctionalDataset:
         return len(self.variants)
 
     def _init_variant_sample_assignments(self):
-        NSamples = 4 # P/LP, B/LB, gnomAD, synonymous
+        self._sample_names = ["Pathogenic/Likely Pathogenic",
+                        "Benign/Likely Benign",
+                        "gnomAD",
+                        "Synonymous"]
+        NSamples = len(self._sample_names)
         self._sample_assignments = np.zeros((len(self),NSamples), dtype=bool)
         for i,variant in enumerate(self.variants):
             if variant.is_synonymous:
@@ -70,10 +84,7 @@ class FunctionalDataset:
     
     @property
     def samples(self):
-        sample_names = ["Pathogenic/Likely Pathogenic",
-                        "Benign/Likely Benign",
-                        "gnomAD",
-                        "Synonymous"]
+        sample_names = self._sample_names
         for sample_index in range(4):
             if self.sample_assignments[:,sample_index].sum() > 0:
                 yield self.scores[self.sample_assignments[:,sample_index]],sample_names[sample_index]
@@ -95,6 +106,7 @@ class Variant:
         self.init_gnomad_MAF()
         self.init_clinvar_sig()
         self.validate_variant_info()
+        self.aa_pos = pd.to_numeric(self.aa_pos, errors='coerce')
 
     def init_gnomad_MAF(self):
         """
@@ -118,8 +130,8 @@ class Variant:
         if not hasattr(self,'aa_ref') or self.aa_ref not in self.valid_alleles.union({"*","-"}):
             raise ValueError("aa_ref must be a valid amino acid, '*', or '-'")
         if not hasattr(self, "aa_alt") or \
-            (self.aa_alt not in self.valid_alleles.union({"*",'-',pd.NA})):
-            raise ValueError("aa_alt must be a valid amino acid, '*', or '-', or NaN")
+            (self.aa_alt not in self.valid_alleles.union({"*",'-',np.nan})):
+            raise ValueError(f"aa_alt must be a valid amino acid, '*', or '-', or NaN, not {self.aa_alt}")
         if not hasattr(self, "HGNC_id"):
             raise ValueError("HGNC_id must be given")
         if not hasattr(self, "aa_pos"):
@@ -206,17 +218,17 @@ class NucleotideVariant(Variant):
         if not hasattr(self, "auth_transcript_id") \
             or not isinstance(self.auth_transcript_id, str) or \
                 not len(self.auth_transcript_id):
-            raise ValueError("auth_transcript_id must be a string")
+            logging.warning(f"auth_transcript_id {self.auth_transcript_id} is invalid ")
         if not hasattr(self, "transcript_pos"):
             raise ValueError("transcript_pos must be provided")
-        if not hasattr(self, "transcript_ref") \
-            or not isinstance(self.transcript_ref, str) or \
-                self.transcript_ref not in self.valid_nucleotides:
-            raise ValueError("transcript_ref must be a valid nucleotide")
-        if not hasattr(self, "transcript_alt") \
-            or not isinstance(self.transcript_alt, str) or \
-                self.transcript_alt not in self.valid_nucleotides:
-            raise ValueError("transcript_alt must be a valid nucleotide")
+        if not hasattr(self, "ref_allele") \
+            or not isinstance(self.ref_allele, str) or \
+                self.ref_allele not in self.valid_nucleotides:
+            raise ValueError("ref_allele must be a valid nucleotide")
+        if not hasattr(self, "alt_allele") \
+            or not isinstance(self.alt_allele, str) or \
+                self.alt_allele not in self.valid_nucleotides:
+            raise ValueError("alt_allele must be a valid nucleotide")
         
     @property
     def valid_nucleotides(self):
@@ -229,5 +241,5 @@ class NucleotideVariant(Variant):
             self.HGNC_id == other.HGNC_id and \
             self.auth_transcript == other.auth_transcript and \
             self.transcript_pos == other.transcript_pos and \
-            self.transcript_ref == other.transcript_ref and \
-            self.transcript_alt == other.transcript_alt
+            self.ref_allele == other.ref_allele and \
+            self.alt_allele == other.alt_allele
