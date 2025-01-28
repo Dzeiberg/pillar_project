@@ -1,7 +1,9 @@
 import pandas as pd
+from pandas.api.types import is_string_dtype
 import numpy as np
 from pathlib import Path
 
+from functools import reduce
 class PillarProjectDataframe:
     def __init__(self, data_path: Path|str):
         self.data_path = Path(data_path)
@@ -11,8 +13,26 @@ class PillarProjectDataframe:
         if not self.data_path.exists():
             raise FileNotFoundError(f"File not found: {self.data_path}")
         self.dataframe = pd.read_csv(self.data_path)
+    
+    def __len__(self):
+        return len(self.dataframe)
+    
+    def get_unique_clinsigs(self):
+        sig_sets = self.dataframe.clinvar_sig.apply(lambda li: set(_clean_clinsigs(_tolist(li)))).values
+        return reduce(lambda x,y : x.union(y), sig_sets)
+        
+def _tolist(value,sep="^"):
+    try:
+        return value.split(sep)
+    except AttributeError:
+        if pd.isna(value):
+            return []
+        return [value,]
+    
+def _clean_clinsigs(values):
+    return [v.split(";")[0] for v in values]
 
-class FunctionalDataset:
+class Scoreset:
     def __init__(self, dataframe: pd.DataFrame):
         self._init_dataframe(dataframe)
 
@@ -77,6 +97,12 @@ class FunctionalDataset:
     def __getitem__(self, idx):
         return self.variants[idx]
     
+    def __repr__(self):
+        out = f"Scoreset with {len(self)} variants\n"
+        for sample_scores, sample_name in self.samples:
+            out += f"\t{sample_name}: {len(sample_scores)} variants\n"
+        return out
+    
 class Variant:
     def __init__(self, variant_info: pd.Series):
         self._init_variant_info(variant_info)
@@ -85,6 +111,23 @@ class Variant:
         for k, v in variant_info.items():
             setattr(self, k, v)
         self.validate_variant_info()
+        self.parse_gnomad_MAF()
+        self.parse_clinvar_sig()
+
+    def parse_clinvar_sig(self):
+        if hasattr(self, "clinvar_sig"):
+            self.clinvar_sig = set(_clean_clinsigs(_tolist(self.clinvar_sig)))
+        else:
+            self.clinvar_sig = set()
+
+    def parse_gnomad_MAF(self):
+        vals = [v for v in _tolist(self.gnomad_MAF) if v != "nan"]
+
+        af_vals = pd.to_numeric(vals)
+        if len(af_vals) == 0:
+            self.gnomad_MAF = 0
+        else:
+            self.gnomad_MAF = np.nanmax(af_vals)
 
     def validate_variant_info(self):
         if not hasattr(self,'aa_ref') or self.aa_ref not in self.valid_alleles.union({"*","-"}):
@@ -109,29 +152,25 @@ class Variant:
     def is_pathogenic_or_likely_pathogenic(self):
         if self.clinvar_sig_missing():
             return False
-        sig = self.clinvar_sig.split(";")[0]
-        return sig in {"Pathogenic","Pathogenic/Likely_pathogenic","Likely_pathogenic"}
+        return len(self.clinvar_sig.intersection({"Pathogenic","Pathogenic/Likely_pathogenic","Likely_pathogenic"})) > 0
 
     @property
     def is_benign_or_likely_benign(self):
         if self.clinvar_sig_missing():
             return False
-        sig = self.clinvar_sig.split(";")[0]
-        return sig in {"Benign","Benign/Likely_benign","Likely_benign"}
+        return len(self.clinvar_sig.intersection({"Benign","Benign/Likely_benign","Likely_benign"})) > 0
 
     @property
     def is_conflicting(self):
         if self.clinvar_sig_missing():
             return False
-        sig = self.clinvar_sig.split(";")[0]
-        return sig == "Conflicting_classifications_of_pathogenicity"
+        return "Conflicting_classifications_of_pathogenicity" in self.clinvar_sig
 
     @property
     def is_uncertain(self):
         if self.clinvar_sig_missing():
             return False
-        sig = self.clinvar_sig.split(";")[0]
-        return sig == "Uncertain_significance"
+        return "Uncertain_significance" in self.clinvar_sig
 
     @property
     def valid_alleles(self):
