@@ -33,10 +33,10 @@ def _clean_clinsigs(values):
     return [v.split(";")[0] for v in values]
 
 class Scoreset:
-    def __init__(self, dataframe: pd.DataFrame):
+    def __init__(self, dataframe: pd.DataFrame,**kwargs):
         self._init_dataframe(dataframe)
 
-    def _init_dataframe(self, dataframe : pd.DataFrame):
+    def _init_dataframe(self, dataframe : pd.DataFrame,**kwargs):
         if not isinstance(dataframe, pd.DataFrame):
             raise TypeError("dataframe must be a pandas DataFrame")
         if len(dataframe.Dataset.unique()) != 1:
@@ -47,7 +47,7 @@ class Scoreset:
         variant_type = self.identify_variant_type(dataframe)
         self.variants = [self._init_variant(row,variant_type) for _, row in dataframe.iterrows() \
                          if not pd.isna([row.aa_pos, row.aa_ref, row.aa_alt]).all()]
-        self._init_variant_sample_assignments()
+        self._init_variant_sample_assignments(**kwargs)
 
     def identify_variant_type(self, dataframe) -> str:
         types = dataframe.nucleotide_or_aa.dropna().unique()
@@ -66,14 +66,15 @@ class Scoreset:
     def __len__(self):
         return len(self.variants)
 
-    def _init_variant_sample_assignments(self):
+    def _init_variant_sample_assignments(self,**kwargs):
         NSamples = 4 # P/LP, B/LB, gnomAD, synonymous
         self._sample_assignments = np.zeros((len(self),NSamples), dtype=bool)
+        missense_only = kwargs.get("missense_only",False)
         for i,variant in enumerate(self.variants):
             if variant.is_synonymous:
                 self._sample_assignments[i,3] = True
                 continue
-            if variant.is_missense:
+            if not missense_only or variant.is_missense:
                 if variant.present_in_gnomAD:
                     self._sample_assignments[i,2] = True
                 if variant.is_pathogenic_or_likely_pathogenic:
@@ -147,14 +148,14 @@ class Variant:
         self.clinvar_sig = sigs
 
     def validate_variant_info(self):
-        if not hasattr(self,'aa_ref') or self.aa_ref not in self.valid_alleles.union({"*","-"}):
-            raise ValueError("aa_ref must be a valid amino acid, '*', or '-'")
-        if not hasattr(self, "aa_alt") or \
-            (self.aa_alt not in self.valid_alleles.union({"*",'-',pd.NA})):
-            raise ValueError("aa_alt must be a valid amino acid, '*', or '-', or NaN")
+        if not hasattr(self,'aa_ref') or not (Variant.is_nan(self.aa_ref) or self.aa_ref in self.valid_alleles.union({"*","-"})):
+            raise ValueError(f"aa_ref must be a valid amino acid, '*', '-', or NaN, not {self.aa_ref} for {self.ID}")
+        if not hasattr(self,'aa_alt') or not (Variant.is_nan(self.aa_alt) or self.aa_alt in self.valid_alleles.union({"*","-"})):
+            raise ValueError(f"aa_alt must be a valid amino acid, '*', or '-', or NaN, not {self.aa_alt} for {self.ID}")
         if not hasattr(self, "HGNC_id"):
             raise ValueError("HGNC_id must be given")
         if not hasattr(self, "aa_pos"):
+            self.aa_pos = pd.to_numeric(self.aa_pos, errors='coerce')
             raise ValueError("aa_pos must be given but can be NaN")
     
     @property
@@ -235,6 +236,7 @@ class AminoAcidVariant(Variant):
 class NucleotideVariant(Variant):
     def validate_variant_info(self):
         super().validate_variant_info()
+        return
         if not hasattr(self, "auth_transcript_id") \
             or not isinstance(self.auth_transcript_id, str) or \
                 not len(self.auth_transcript_id):
@@ -244,11 +246,11 @@ class NucleotideVariant(Variant):
         if not hasattr(self, "transcript_ref") \
             or not isinstance(self.transcript_ref, str) or \
                 self.transcript_ref not in self.valid_nucleotides:
-            raise ValueError("transcript_ref must be a valid nucleotide")
+            raise ValueError(f"transcript_ref must be a valid nucleotide, not {self.transcript_ref} for {self.ID}")
         if not hasattr(self, "transcript_alt") \
             or not isinstance(self.transcript_alt, str) or \
                 self.transcript_alt not in self.valid_nucleotides:
-            raise ValueError("transcript_alt must be a valid nucleotide")
+            raise ValueError(f"transcript_alt must be a valid nucleotide, not {self.transcript_alt} for {self.ID}")
         
     @property
     def valid_nucleotides(self):
