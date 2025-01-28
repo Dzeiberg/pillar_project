@@ -26,7 +26,7 @@ def _tolist(value,sep="^"):
         return value.split(sep)
     except AttributeError:
         if pd.isna(value):
-            return []
+            return [np.nan,]
         return [value,]
     
 def _clean_clinsigs(values):
@@ -82,7 +82,7 @@ class Scoreset:
                     self._sample_assignments[i,1] = True
     @property
     def sample_assignments(self):
-        return self._sample_assignments
+        return self._sample_assignments[:,self._sample_assignments.sum(axis=0) > 0]
     
     @property
     def n_samples(self):
@@ -95,8 +95,8 @@ class Scoreset:
                         "gnomAD",
                         "Synonymous"]
         for sample_index in range(4):
-            if self.sample_assignments[:,sample_index].sum() > 0:
-                yield self.scores[self.sample_assignments[:,sample_index]],sample_names[sample_index]
+            if self._sample_assignments[:,sample_index].sum() > 0:
+                yield self.scores[self._sample_assignments[:,sample_index]],sample_names[sample_index]
     
     @property
     def scores(self):
@@ -119,32 +119,21 @@ class Variant:
         for k, v in variant_info.items():
             setattr(self, k, v)
         self.init_gnomad_MAF()
-        self.init_clinvar_sig()
         self.validate_variant_info()
-        self.parse_gnomad_MAF()
         self.parse_clinvar_sig()
 
     def parse_clinvar_sig(self):
         if hasattr(self, "clinvar_sig"):
-            self.clinvar_sig = set(_clean_clinsigs(_tolist(self.clinvar_sig)))
+            self.clinvar_sig = set(_clean_clinsigs([v for v in _tolist(self.clinvar_sig) if v != "nan" and not pd.isna(v)]))
         else:
             self.clinvar_sig = set()
-
-    def parse_gnomad_MAF(self):
-        vals = [v for v in _tolist(self.gnomad_MAF) if v != "nan"]
-
-        af_vals = pd.to_numeric(vals)
-        if len(af_vals) == 0:
-            self.gnomad_MAF = 0
-        else:
-            self.gnomad_MAF = np.nanmax(af_vals)
 
     def init_gnomad_MAF(self):
         """
         It is possible that the MAF is a list of values separated by a semicolon. If so, parse the list and obtain the maximum value.
         """
-        maf_values = str(self.gnomad_MAF).split(";")
-        maf = max(pd.to_numeric(maf_values, errors='coerce'))
+        maf_values = _tolist(self.gnomad_MAF)
+        maf = np.nanmax(pd.to_numeric(maf_values, errors='coerce'))
         if np.isnan(maf):
             maf = 0
         self.gnomad_MAF = maf
