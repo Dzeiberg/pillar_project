@@ -1,16 +1,50 @@
-from mave_calibration.main import runFitIteration
+from pillar_project.fit_utils.multicomp_model import MulticomponentCalibrationModel
 from scipy.stats import skewnorm
 import numpy as np
 from typing import List, Tuple
-from mave_calibration.evidence_thresholds import get_tavtigian_constant
+from pillar_project.fit_utils.evidence_thresholds import get_tavtigian_constant
 import logging
 from joblib import Parallel, delayed
+import pandas as pd
+
+
+def tryToFit(observations, sample_indicators, num_components, **kwargs):
+    model = MulticomponentCalibrationModel(num_components)
+    try:
+        model.fit(observations, sample_indicators, **kwargs)
+    except Exception as e:
+    #     logging.error(f"Failed to fit model\n {e}")
+        if not hasattr(model,'_log_likelihoods'):
+            model._log_likelihoods = []
+        model._log_likelihoods.append(-np.inf)
+    return model
+
+def get_bootstrap_indices(dataset_size):
+    """
+    Generate a bootstrap split of a dataset of a given size
+
+    Required Arguments:
+    --------------------------------
+    dataset_size -- int
+        The size of the dataset to generate the bootstrap split for
+
+    Returns:
+    --------------------------------
+    train_indices -- np.ndarray
+        The indices of the training set
+    test_indices -- np.ndarray
+        The indices of the test set
+    """
+    indices = np.arange(dataset_size)
+    train_indices = np.random.choice(indices, size=dataset_size, replace=True)
+    test_indices = np.setdiff1d(indices, train_indices)
+    return train_indices, test_indices
 
 class Fit:
     def __init__(self, scoreset):
         self.scoreset = scoreset
 
-    def run(self,**kwargs):
+    def run(self,component_range,**kwargs):
         """
         Run a single fit on a bootstrapped sample of the data
         
@@ -23,27 +57,31 @@ class Fit:
         """
         NUM_FITS = kwargs.get('num_fits',100)
         observations = self.scoreset.scores
+        observations = pd.to_numeric(observations, errors='coerce')
         sample_assignments = self.scoreset.sample_assignments
         sample_assignments = makeOneHot(sample_assignments)
-        include = sample_assignments.any(axis=1)
+        include = sample_assignments.any(axis=1) & ~np.isnan(observations)
         observations = observations[include]
         sample_assignments = sample_assignments[include]
-        best_log_likelihood = -np.inf
+        train_indices , val_indices = get_bootstrap_indices(len(observations))
+        train_observations = observations[train_indices]
+        train_sample_assignments = sample_assignments[train_indices]
+        val_observations = observations[val_indices]
+        val_sample_assignments = sample_assignments[val_indices]
         core_limit = kwargs.get('core_limit',-1)
         if core_limit == 1:
-            fit_results = [runFitIteration(observations,sample_assignments,**kwargs) for i in range(NUM_FITS)]
+            models = [tryToFit(train_observations,train_sample_assignments,num_components, **kwargs) for i in range(NUM_FITS) for num_components in component_range]
         else:
-            fit_results = Parallel(n_jobs=kwargs.get('core_limit',-1))(delayed(runFitIteration)(observations,
-                                                                                            sample_assignments, **kwargs) \
-                                                                        for i in range(NUM_FITS))
-        for (fit,fit_log_likelihood) in fit_results:
-            if fit_log_likelihood > best_log_likelihood:
-                best_fit = fit
-                best_log_likelihood = fit_log_likelihood
-        if np.isinf(best_log_likelihood):
+            models = Parallel(n_jobs=kwargs.get('core_limit',-1))(delayed(tryToFit)(train_observations,
+                                                                                            train_sample_assignments, num_components, **kwargs) \
+                                                                        for i in range(NUM_FITS) for num_components in component_range)
+        # models = sorted(models,key=lambda x: x._log_likelihoods[-1],reverse=True)
+        val_lls = [m.get_log_likelihood(val_observations,val_sample_assignments) for m in models]
+        best_idx = np.nanargmax(val_lls)
+        best_fit = models[best_idx]
+        if np.isinf(val_lls[best_idx]):
             raise ValueError("Failed to fit model")
-        self.fit_result = best_fit
-        self.fit_log_likelihood = best_log_likelihood
+        self.model = best_fit
         self._fit_eval()
 
     def joint_densities(self, x, sampleNum):
@@ -74,26 +112,30 @@ class Fit:
             u = np.unique(sample_scores)
             u.sort()
             self._eval_metrics[sample_name] = {}
-            self._eval_metrics[sample_name]['empirical_cdf'] = get_empirical_cdf(u)
-            self._eval_metrics[sample_name]['model_cdf'] = get_cdf(u, self.fit_result['component_params'], self.fit_result['weights'][sampleNum])
-            self._eval_metrics[sample_name]['cdf_dist'] = yang_dist(self._eval_metrics[sample_name]['empirical_cdf'], self._eval_metrics[sample_name]['model_cdf'])
+            self._eval_metrics[sample_name]['empirical_cdf'] = self.model.empirical_cdf(u)
+            self._eval_metrics[sample_name]['model_cdf'] = self.model.get_sample_cdf(u,sampleNum)
+            self._eval_metrics[sample_name]['cdf_dist'] = self.model.yang_dist(self._eval_metrics[sample_name]['empirical_cdf'],
+                                                                               self._eval_metrics[sample_name]['model_cdf'])
 
     def scoreset_is_flipped(self):
         """
         Check if the scoreset is flipped
         """
-        _isflipped = self.fit_result["weights"][0,0] < self.fit_result["weights"][1,0] and self.fit_result['component_params'][0][1] < self.fit_result['component_params'][1][1]
+        logging.warning("Unsure if this is applicable for multi-component models")
+        _isflipped = self.model.sample_weights[0,0] < self.model.sample_weights[1,0] and self.fit_result['component_params'][0][1] < self.fit_result['component_params'][1][1]
         return _isflipped
     
     def get_prior_estimate(self):
-        return prior_from_weights(self.fit_result['weights'], inverted=self.scoreset_is_flipped())
+        logging.warning("Unsure if this is applicable for multi-component models")
+        return prior_from_weights(self.model.sample_weights, inverted=self.scoreset_is_flipped())
     
     def get_log_lrPlus(self,x, pathogenic_idx=0, controls_idx=1):
-        fP = self.joint_densities(x, pathogenic_idx).sum(axis=0)
-        fB = self.joint_densities(x, controls_idx).sum(axis=0)
+        fP = self.model.get_sample_density(x, pathogenic_idx)
+        fB = self.model.get_sample_density(x, controls_idx)
         return np.log(fP) - np.log(fB)
     
     def get_score_thresholds(self,point_values):
+        logging.warning("Unsure if this is applicable for multi-component models")
         score_thresholds_pathogenic, score_thresholds_benign = calculate_score_thresholds(self.get_log_lrPlus(self.scoreset.scores),
                                                                         self.get_prior_estimate(),
                                                                         self.scoreset.scores,
@@ -101,35 +143,17 @@ class Fit:
                                                                         inverted=self.scoreset_is_flipped())
         return score_thresholds_pathogenic, score_thresholds_benign
     
-    def to_dict(self):
+    def to_dict(self,skip_thresholds=True):
         lrPlus_pathogenic, lrPlus_benign = self.get_score_thresholds([1,2,4,8])
-        return {'component_params': self.fit_result['component_params'],
-                'weights': self.fit_result['weights'].tolist(),
-                'log_likelihood': self.fit_log_likelihood,
-                'eval_metrics': {k : {'empirical_cdf' : v['empirical_cdf'].tolist(), 'model_cdf' : v['model_cdf'].tolist(), 'cdf_dist': v['cdf_dist']} for k,v in self._eval_metrics.items()},
-                'prior' : self.get_prior_estimate(),
+        model_params = {k : v.tolist() for k,v in self.model.get_params().items()}
+        extra = {}
+        if not skip_thresholds:
+            extra = {'prior' : self.get_prior_estimate(),
                  'score_thresholds' : {'pathogenic' : lrPlus_pathogenic.tolist(),
                                        'benign' : lrPlus_benign.tolist()}}
+        return {**model_params,**extra,
+                'eval_metrics': {k : {'empirical_cdf' : v['empirical_cdf'].tolist(), 'model_cdf' : v['model_cdf'].tolist(), 'cdf_dist': v['cdf_dist']} for k,v in self._eval_metrics.items()},}
 
-
-def get_cdf(u, components, w):
-    cdf = np.zeros_like(u)
-    for i in range(len(components)):
-        cdf += w[i] * skewnorm.cdf(u,*components[i])
-    return cdf
-
-def get_empirical_cdf(u):
-    nu = len(u)
-    empirical_cdf = np.linspace(0,1,nu) + (1/nu)
-    return empirical_cdf
-
-def yang_dist(x,y,p=2):
-    x = np.array(x)
-    y = np.array(y)
-    gt = x >= y
-    dP = ((x[gt] - y[gt]).sum()**p + (y[~gt] - x[~gt]).sum()**p) ** (1/p)
-    dPn = dP / sum([max(abs(xi),abs(yi),abs(xi-yi)) for xi,yi in zip(x,y)])
-    return dPn
 
 def prior_from_weights(weights : np.ndarray, population_idx : int=2, controls_idx : int=1, pathogenic_idx : int=0, inverted: bool = False) -> float:
     """

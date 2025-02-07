@@ -169,3 +169,9 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+*.log
+test_figs/
+dataset_summary_all_synonymousNonExclusive.txt
+dataset_summary_all.txt
+dataset_summary_missense.txt
