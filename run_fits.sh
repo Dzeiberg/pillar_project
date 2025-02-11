@@ -1,0 +1,25 @@
+#!/bin/bash
+#SBATCH --job-name=run_fits
+#SBATCH --output=/work/pedjas_lab/zeiberg.d/pillar_project/logs/run_fits_%j_%A_%a.log
+#SBATCH --error=/work/pedjas_lab/zeiberg.d/pillar_project/logs/run_fits_%j_%A_%a.err
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=20
+#SBATCH --mem=32G
+#SBATCH --time=23:59:59
+#SBATCH --partition=standard
+#SBATCH --array=1-54
+USER=$(whoami)
+module load anaconda3/2022.05
+conda env create -f /home/$USER/pillar_project/environment.yaml -p /work/pedjas_lab/zeiberg.d/conda_envs/pillar_project
+
+source activate /work/pedjas_lab/zeiberg.d/conda_envs/pillar_project
+
+DATASET=$(sed -n "${SLURM_ARRAY_TASK_ID}p" /home/$USER/pillar_project/dataset_names.txt)
+SAVEDIR=/work/pedjas_lab/zeiberg.d/pillar_project/fit_results/
+echo $DATASET
+for i in {1..1000}
+do
+    echo "Iteration $i"
+    python /home/$USER/pillar_project/run_fits.py run_single_fit $DATASET $SAVEDIR/fit_results_${DATASET}_${i}/
+done
+
