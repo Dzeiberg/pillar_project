@@ -276,5 +276,5 @@ def summarize_datasets(dataframe_path, **kwargs):
 
 
 if __name__ == "__main__":
-    # Fire(summarize_datasets)
-    summarize_datasets("/data/dzeiberg/pillar_project/dataframe/pillar_data_condensed_gold_standard_02_05_25.csv",missense_only=False, synonymous_exclusive=False,output_file="dataset_summary_all_synonymousNonExclusive.txt")
+    Fire(summarize_datasets)
+    # summarize_datasets("/data/dzeiberg/pillar_project/dataframe/pillar_data_condensed_gold_standard_02_05_25.csv",missense_only=False, synonymous_exclusive=False,output_file="dataset_summary_all_synonymousNonExclusive.txt")

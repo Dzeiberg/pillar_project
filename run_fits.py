@@ -45,7 +45,7 @@ def generate_timestamp():
 #                 f.write(json.dumps(result, indent=4))
 #                 print(f"Saving {dataset_name} fit {fit_repetition} to {f.name}")
 
-def run_single_fit(dataset_name, save_dir,**kwargs):
+def run_single_fit(dataset_name, data_filepath, save_dir,**kwargs):
     """
     Run a single fit on a dataset and save the results to a file
     
@@ -62,8 +62,10 @@ def run_single_fit(dataset_name, save_dir,**kwargs):
     NUMFITS = kwargs.get("num_fits", 100)
     save_dir = Path(save_dir)
     
-
-    df = PillarProjectDataframe("/data/dzeiberg/pillar_project/dataframe/pillar_data_condensed_01_28_25.csv")
+    data_filepath = Path(data_filepath)
+    if not data_filepath.exists():
+        raise FileNotFoundError(f"Data file {data_filepath} not found")
+    df = PillarProjectDataframe(data_filepath)
     dataset_df = df.dataframe[df.dataframe.Dataset == dataset_name]
     ds = Scoreset(dataset_df,missense_only=False)
     fit = Fit(ds)
