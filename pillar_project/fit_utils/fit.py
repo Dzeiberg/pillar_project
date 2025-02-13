@@ -176,10 +176,10 @@ class Fit:
         return score_thresholds_pathogenic, score_thresholds_benign
     
     def to_dict(self,skip_thresholds=True):
-        lrPlus_pathogenic, lrPlus_benign = self.get_score_thresholds([1,2,4,8])
         model_params = {k : v.tolist() for k,v in self.model.get_params().items()}
         extra = {}
         if not skip_thresholds:
+            lrPlus_pathogenic, lrPlus_benign = self.get_score_thresholds([1,2,4,8])
             extra = {'prior' : self.get_prior_estimate(),
                  'score_thresholds' : {'pathogenic' : lrPlus_pathogenic.tolist(),
                                        'benign' : lrPlus_benign.tolist()}}
