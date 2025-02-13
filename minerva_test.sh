@@ -1,6 +1,6 @@
 #!/bin/bash
 #BSUB -P acc_pejaverlab
-#BSUB -q premium
+#BSUB -q express
 #BSUB -W 3:59
 #BSUB -J pillar_project[1-10]
 #BSUB -n 10
