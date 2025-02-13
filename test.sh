@@ -19,6 +19,6 @@ echo $DATASET
 for i in {1..2}
 do
     echo "Iteration $i"
-    python /work/pedjas_lab/zeiberg.d/pillar_project/src/pillar_project/run_fits.py run_single_fit $DATASET $DATAFRAME $SAVEDIR/fit_results_${DATASET}_${i}/ --num_fits 5
+    python -u /work/pedjas_lab/zeiberg.d/pillar_project/src/pillar_project/run_fits.py run_single_fit $DATASET $DATAFRAME $SAVEDIR/fit_results_${DATASET}_${i}/ --num_fits 5
 done
 

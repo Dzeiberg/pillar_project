@@ -40,6 +40,38 @@ def get_bootstrap_indices(dataset_size):
     test_indices = np.setdiff1d(indices, train_indices)
     return train_indices, test_indices
 
+def sample_specific_bootstrap(sample_assignments):
+    """
+    Bootstrap each sample separately
+
+    Required Arguments:
+    --------------------------------
+    sample_assignments -- np.ndarray (NSamples, NComponents)
+        The one-hot encoded sample assignments
+    
+    Returns:
+    --------------------------------
+    train_indices -- np.ndarray
+        The indices of the training set
+    eval_indices -- np.ndarray
+        The indices of the eval set
+    """
+    train_indices = []
+    eval_indices = []
+    for sample_num in range(sample_assignments.shape[1]):
+        sample_indices = np.where(sample_assignments[:,sample_num])[0]
+        if not len(sample_indices):
+            continue
+        sample_eval = []
+        while not len(sample_eval):
+            sample_train = np.random.choice(sample_indices, size=len(sample_indices), replace=True)
+            sample_eval = np.setdiff1d(sample_indices, sample_train)
+        train_indices.append(sample_train)
+        eval_indices.append(sample_eval)
+    train_indices = np.concatenate(train_indices)
+    eval_indices = np.concatenate(eval_indices)
+    return train_indices, eval_indices
+
 class Fit:
     def __init__(self, scoreset):
         self.scoreset = scoreset
@@ -63,7 +95,7 @@ class Fit:
         include = sample_assignments.any(axis=1) & ~np.isnan(observations)
         observations = observations[include]
         sample_assignments = sample_assignments[include]
-        train_indices , val_indices = get_bootstrap_indices(len(observations))
+        train_indices , val_indices = sample_specific_bootstrap(len(observations))
         train_observations = observations[train_indices]
         train_sample_assignments = sample_assignments[train_indices]
         val_observations = observations[val_indices]
