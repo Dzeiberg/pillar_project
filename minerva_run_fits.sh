@@ -7,7 +7,7 @@
 #BSUB -J pillar_project[1-1000]
 #BSUB -o /sc/arion/projects/pejaverlab/users/zeibed01/pillar_project/logs/pillar_project_log.out.%I
 source /hpc/users/zeibed01/.bashrc
-source activate source activate /hpc/users/zeibed01/.conda/envs/pillar_project
+source activate /hpc/users/zeibed01/.conda/envs/pillar_project
 
 # set save directory
 SAVEDIR=/sc/arion/projects/pejaverlab/users/zeibed01/pillar_project/results/
@@ -20,5 +20,5 @@ for dataset_num in $(seq 1 $NUM_DATASETS)
 do
         DATASET=$(sed -n "${dataset_num}p" /sc/arion/projects/pejaverlab/users/zeibed01/pillar_project/data/dataset_names.txt)
         echo "Running $DATASET - iteration $LSB_JOBINDEX";
-        python -u /sc/arion/projects/pejaverlab/users/zeibed01/pillar_project/run_fits.py run_single_fit $DATASET $DATAFRAME $SAVEDIR/fit_results_${DATASET}_${LSB_JOBINDEX}/
+        python -u /sc/arion/projects/pejaverlab/users/zeibed01/pillar_project/run_fits.py run_single_fit $DATASET $DATAFRAME $SAVEDIR/fit_results_${DATASET}_${LSB_JOBINDEX}/ --num_fits 100 --core_limit 20
 done

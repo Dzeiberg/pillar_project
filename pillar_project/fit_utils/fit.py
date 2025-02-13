@@ -95,7 +95,7 @@ class Fit:
         include = sample_assignments.any(axis=1) & ~np.isnan(observations)
         observations = observations[include]
         sample_assignments = sample_assignments[include]
-        train_indices , val_indices = sample_specific_bootstrap(len(observations))
+        train_indices , val_indices = sample_specific_bootstrap(sample_assignments)
         train_observations = observations[train_indices]
         train_sample_assignments = sample_assignments[train_indices]
         val_observations = observations[val_indices]
