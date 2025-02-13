@@ -3,6 +3,8 @@
 #BSUB -q premium
 #BSUB -W 143:59
 #BSUB -J pillar_project[1-10]
+#BSUB -n 20
+#BSUB -R span[hosts=1]
 #BSUB -o /sc/arion/projects/pejaverlab/users/zeibed01/pillar_project/logs/pillar_project_log.out.%I
 source /hpc/users/zeibed01/.bashrc
 source activate source activate /hpc/users/zeibed01/.conda/envs/pillar_project

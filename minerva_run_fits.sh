@@ -2,6 +2,8 @@
 #BSUB -P acc_pejaverlab
 #BSUB -q premium
 #BSUB -W 143:59
+#BSUB -n 20
+#BSUB -R span[hosts=1]
 #BSUB -J pillar_project[1-1000]
 #BSUB -o /sc/arion/projects/pejaverlab/users/zeibed01/pillar_project/logs/pillar_project_log.out.%I
 source /hpc/users/zeibed01/.bashrc
