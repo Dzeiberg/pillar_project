@@ -11,7 +11,7 @@
 USER=$(whoami)
 source activate /work/pedjas_lab/zeiberg.d/pillar_project/env/
 
-DATASET=$(sed -n "${SLURM_ARRAY_TASK_ID}p" work/pedjas_lab/zeiberg.d/pillar_project/data/dataset_names.txt)
+DATASET=$(sed -n "${SLURM_ARRAY_TASK_ID}p" /work/pedjas_lab/zeiberg.d/pillar_project/data/dataset_names.txt)
 SAVEDIR=/work/pedjas_lab/zeiberg.d/pillar_project/fit_results/
 mkdir -p $SAVEDIR
 DATAFRAME=/work/pedjas_lab/zeiberg.d/pillar_project/data/pillar_data_condensed_01_28_25.csv
