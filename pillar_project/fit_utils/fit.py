@@ -17,7 +17,7 @@ def tryToFit(observations, sample_indicators, num_components, **kwargs):
     try:
         model.fit(observations, sample_indicators, **kwargs)
     except (Exception,AttributeError) as e:
-        logger.error(f"Failed to fit model\n {e}")
+        print(f"Failed to fit model\n {e}")
         # print(e)
         if not hasattr(model,'_log_likelihoods'):
             model._log_likelihoods = []
@@ -113,13 +113,13 @@ class Fit:
         observations = self.scoreset.scores
         observations = pd.to_numeric(observations, errors='coerce')
         sample_assignments = self.scoreset.sample_assignments
-        logger.debug(f"sample counts: {sample_assignments.sum(0)}")
+        print(f"sample counts: {sample_assignments.sum(0)}")
         sample_assignments = makeOneHot(sample_assignments)
-        logger.debug(f"sample counts: {sample_assignments.sum(0)}")
+        print(f"sample counts: {sample_assignments.sum(0)}")
         include = sample_assignments.any(axis=1) & ~np.isnan(observations)
         observations = observations[include]
         sample_assignments = sample_assignments[include]
-        logger.debug(f"sample counts: {sample_assignments.sum(0)}")
+        print(f"sample counts: {sample_assignments.sum(0)}")
         train_indices , val_indices = sample_specific_bootstrap(sample_assignments)
         train_observations = observations[train_indices]
         train_sample_assignments = sample_assignments[train_indices]
@@ -178,7 +178,7 @@ class Fit:
         """
         Check if the scoreset is flipped
         """
-        logger.warning("Unsure if this is applicable for multi-component models")
+        print("Unsure if this is applicable for multi-component models")
         _isflipped = self.model.sample_weights[0,0] < self.model.sample_weights[1,0] and self.fit_result['component_params'][0][1] < self.fit_result['component_params'][1][1]
         return _isflipped
     
@@ -231,7 +231,7 @@ class Fit:
         return np.log(fP) - np.log(fB)
     
     def get_score_thresholds(self,prior, point_values):
-        logger.warning("Unsure if this is applicable for multi-component models")
+        print("Unsure if this is applicable for multi-component models")
         score_thresholds_pathogenic, score_thresholds_benign = calculate_score_thresholds(self.get_log_lrPlus(self.scoreset.scores),
                                                                         prior,
                                                                         self.scoreset.scores,
@@ -277,7 +277,7 @@ def prior_from_weights(weights : np.ndarray, population_idx : int=2, controls_id
     prior -- float
         The prior probability of an observation from the population being pathogenic
     """
-    logger.warning("This method does not produce very good estimates for 2 component mixture and is invalid for more than 2 components")
+    print("This method does not produce very good estimates for 2 component mixture and is invalid for more than 2 components")
     if inverted:
         w_idx = 1
     else:
@@ -305,7 +305,7 @@ def thresholds_from_prior(prior, point_values) -> Tuple[List[float]]:
     pathogenic_evidence_thresholds = np.ones(len(point_values)) * np.nan
     benign_evidence_thresholds = np.ones(len(point_values)) * np.nan
     if num_successes < max_successes:
-        logger.warning(f"Only ({num_successes})/{max_successes} rules for combining evidence are satisfied by constant {C}, found using prior of ({prior:.4f})")
+        print(f"Only ({num_successes})/{max_successes} rules for combining evidence are satisfied by constant {C}, found using prior of ({prior:.4f})")
         return pathogenic_evidence_thresholds, benign_evidence_thresholds
         
     for strength_idx, exp_val in enumerate(exp_vals):

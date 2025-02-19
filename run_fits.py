@@ -41,7 +41,7 @@ def run_single_fit(dataset_name, data_filepath, save_dir,**kwargs):
     save_dir.mkdir(parents=True, exist_ok=True)
     result = fit.to_dict(skip_thresholds=True)
     with open(save_dir / f"{dataset_name}_{generate_timestamp()}.json", "w") as f:
-        logger.info(f"Saving {dataset_name} to {f.name}")
+        print(f"Saving {dataset_name} to {f.name}")
         f.write(json.dumps(result, indent=4))
         print(f"Saving {dataset_name} to {f.name}")
 
