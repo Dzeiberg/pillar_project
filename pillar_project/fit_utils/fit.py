@@ -134,6 +134,8 @@ class Fit:
                                                                         for i in range(NUM_FITS) for num_components in component_range)
         # models = sorted(models,key=lambda x: x._log_likelihoods[-1],reverse=True)
         models = [m for m in models if not np.isinf(m._log_likelihoods[-1])]
+        if not len(models):
+            raise ValueError("No models succeeded in fitting")
         val_lls = [m.get_log_likelihood(val_observations,val_sample_assignments) for m in models]
         best_idx = np.nanargmax(val_lls)
         best_fit = models[best_idx]
