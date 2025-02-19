@@ -6,9 +6,9 @@ from fire import Fire
 from functools import reduce
 import logging
 from io import StringIO
+logging.basicConfig()
+logging.root.setLevel(logging.NOTSET)
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                    filename="dataset.log")
 class PillarProjectDataframe:
     def __init__(self, data_path: Path|str):
         self.data_path = Path(data_path)
@@ -48,6 +48,10 @@ class Scoreset:
             raise ValueError("dataframe must contain only one dataset")
         if not len(dataframe):
             raise ValueError("dataframe must contain at least one row")
+        # drop rows with NaN in auth_reported_score
+        dataframe = dataframe.dropna(subset=["auth_reported_score"])
+        if not len(dataframe):
+            raise ValueError("dataframe must contain at least one row with a non-NaN auth_reported_score")
         self.dataframe = dataframe
         variant_type = self.identify_variant_type(dataframe)
         self.variants = [self._init_variant(row,variant_type) for _, row in dataframe.iterrows() \
