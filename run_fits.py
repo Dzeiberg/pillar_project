@@ -43,7 +43,6 @@ def run_single_fit(dataset_name, data_filepath, save_dir,**kwargs):
     with open(save_dir / f"{dataset_name}_{generate_timestamp()}.json", "w") as f:
         print(f"Saving {dataset_name} to {f.name}")
         f.write(json.dumps(result, indent=4))
-        print(f"Saving {dataset_name} to {f.name}")
 
 if __name__ == "__main__":
     fire.Fire()

@@ -487,7 +487,7 @@ class MulticomponentCalibrationModel:
         """
         initializations = 0
         initialized = False
-        while not initialized and initializations < 500:
+        while not initialized and initializations < 100:
             # 1) Fit a k-means model to all assay scores
             self.kmeans_model = KMeans(n_clusters=self.num_components)
             scores = scores.reshape((-1, 1))
