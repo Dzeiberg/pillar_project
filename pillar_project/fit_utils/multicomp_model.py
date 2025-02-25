@@ -7,6 +7,10 @@ from scipy.special import logsumexp
 from copy import deepcopy
 from tqdm import tqdm
 
+try:
+    from pillar_project.fit_utils.optimization_init import optimize_distributions
+except ImportError:
+    from .optimization_init import optimize_distributions
 class MulticomponentCalibrationModel:
     """
     Multi-component skew-normal calibration model.
@@ -582,7 +586,7 @@ class MulticomponentCalibrationModel:
             self.locs[componentNum] = np.mean(component_scores)
             self.scales[componentNum] = np.std(component_scores)
 
-    def adjust_to_monotonicity(self, scores : np.array, **kwargs) -> None:
+    def adjust_to_monotonicity(self, scores : np.array, **kwargs) -> bool:
         """
         Adjust the skew-normal component parameters to enforce monotonicity between the FN and FA components.
 
@@ -598,9 +602,20 @@ class MulticomponentCalibrationModel:
 
         Returns
         -------
-        List[numpy.array]
-            Adjusted skewness, locs, and scales parameters.
+        - initialized : bool
+            True if the skew-normal component parameters were successfully adjusted to enforce monotonicity, False otherwise
         """
+        initialParmas = [[self.skewness[i],self.locs[i],self.scales[i]] \
+                         for i in range(self.num_components)]
+        score_range = (scores.min(),scores.max())
+        optimized_params = optimize_distributions(initialParmas, x_range=score_range)
+        self.skewness = np.array([params[0] for params in optimized_params])
+        self.locs = np.array([params[1] for params in optimized_params])
+        self.scales = np.array([params[2] for params in optimized_params])
+        if self.any_components_violate_monotonicity(scores):
+            print("density constraint initialization failed.")
+            return False
+        return True
         reduction_iters = 0
         delta = .1
         middleCompIndex = self.num_components // 2 # 3->1, 4->2, 5->2
@@ -1195,5 +1210,5 @@ class MulticomponentCalibrationModel:
                                                                                         self.alternate_to_canonical(*updated_params[compI]),
                                                                                         self.alternate_to_canonical(*updated_params[compJ]))
             # print(f"Component {compI} and {compJ} are monotonic.")
-        print(f"All monotoniciy constraints satisfied binary search of parameter {parameter_idx} for component {component_num}.")
+        # print(f"All monotoniciy constraints satisfied binary search of parameter {parameter_idx} for component {component_num}.")
         return lower_bound

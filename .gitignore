@@ -175,3 +175,5 @@ test_figs/
 dataset_summary_all_synonymousNonExclusive.txt
 dataset_summary_all.txt
 dataset_summary_missense.txt
+run.log.txt
+run_bigticket.sh
