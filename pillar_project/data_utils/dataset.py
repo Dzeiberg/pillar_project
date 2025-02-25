@@ -50,6 +50,7 @@ class Scoreset:
             raise ValueError("dataframe must contain at least one row")
         # drop rows with NaN in auth_reported_score
         dataframe = dataframe.dropna(subset=["auth_reported_score"])
+        dataframe = Scoreset.remove_outliers(dataframe)
         if not len(dataframe):
             raise ValueError("dataframe must contain at least one row with a non-NaN auth_reported_score")
         self.dataframe = dataframe
@@ -57,6 +58,34 @@ class Scoreset:
         self.variants = [self._init_variant(row,variant_type) for _, row in dataframe.iterrows() \
                          if not pd.isna([row.aa_pos, row.aa_ref, row.aa_alt]).all()]
         self._init_variant_sample_assignments(**kwargs)
+
+    @staticmethod
+    def remove_outliers(dataframe):
+        """
+        Use Modified IQR heuristic to remove outliers from the dataframe
+
+        Parameters
+        ----------
+        dataframe : pd.DataFrame
+            The dataframe to remove outliers from
+        
+        Returns
+        -------
+        pd.DataFrame
+            The dataframe with outliers removed (1.5 IQR Rule)
+        """
+        scores = dataframe.auth_reported_score
+        Q1 = scores.quantile(0.01)
+        Q3 = scores.quantile(0.99)
+        IQR = Q3 - Q1
+        lowerbound = Q1 - 3 * IQR
+        upperbound = Q3 + 3 * IQR
+        include = (scores >= lowerbound) & (scores <= upperbound)
+        print(f"Q1: {Q1}, Q3: {Q3}, IQR: {IQR}, Lowerbound: {lowerbound}, Upperbound: {upperbound}")
+        print(f"Removing {len(dataframe) - include.sum()} outliers")
+        print(dataframe[~include].auth_reported_score)
+        print(dataframe[~include].clinvar_sig)
+        return dataframe[include]
 
     def identify_variant_type(self, dataframe) -> str:
         types = dataframe.nucleotide_or_aa.dropna().unique()
@@ -149,8 +178,8 @@ class Variant:
         self.clinvar_sig_annotations = list(_clean_clinsigs([v for v in _tolist(self.clinvar_sig)]))
         pathogenic = {"Pathogenic","Pathogenic/Likely_pathogenic","Likely_pathogenic"}
         benign = {"Benign","Benign/Likely_benign","Likely_benign"}
-        if any([v != "nan" for v in self.clinvar_sig_annotations]):
-            logging.info(f"clinvar_sig_annotations: {self.clinvar_sig_annotations}")
+        # if any([v != "nan" for v in self.clinvar_sig_annotations]):
+        #     logging.info(f"clinvar_sig_annotations: {self.clinvar_sig_annotations}")
         self.pathogenic_annotation = np.array([v in pathogenic for v in self.clinvar_sig_annotations])
         self.benign_annotation = np.array([v in benign for v in self.clinvar_sig_annotations])
 

@@ -1,4 +1,5 @@
 from typing import List,Optional,Dict
+import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 import numpy as np
 from scipy.stats import skewnorm, norm
@@ -78,6 +79,7 @@ class MulticomponentCalibrationModel:
         self._max_iter=kwargs.get("max_iter",10000)
         self._tol=kwargs.get('tol',1e-6)
         self._iter=0
+        self._iters_since_improvement = 0
         self._log_likelihoods = []
         self._update_log_likelihood(scores, sampleIndicators)
         show_progress = kwargs.get("show_progress", True)
@@ -97,16 +99,32 @@ class MulticomponentCalibrationModel:
 
     @property
     def converged(self):
-        return self._iter >= self._max_iter or \
-            (self.check_convergence and len(self._log_likelihoods) > 1 and \
-             np.abs(self._log_likelihoods[-1] - self._log_likelihoods[-2]) < self._tol) or \
-             np.isinf(self._log_likelihoods[-1])
+        if self._log_likelihoods[-1] > self._max_likelihood:
+            self._iters_since_improvement = 0
+            self._max_likelihood = self._log_likelihoods[-1]
+            return False
+        self._iters_since_improvement += 1
+        if self._iter >= self._max_iter:
+            print("Reached maximum number of iterations.")
+            return True
+        if np.isinf(self._log_likelihoods[-1]):
+            print("Log likelihood is infinite; stopping.")
+            return True
+        if self.check_convergence and self._iters_since_improvement > 25:
+            print("Have not seen improvement in log likelihood for 25 iterations.")
+            return True
+        return False
+        # return self._iter >= self._max_iter or \
+        #     (self.check_convergence and len(self._log_likelihoods) > 1 and \
+        #      np.abs(self._log_likelihoods[-1] - self._log_likelihoods[-2]) < self._tol) or \
+        #      np.isinf(self._log_likelihoods[-1])
     
     def _update_log_likelihood(self, scores, sampleIndicators):
         """
         Update the likelihood of the model.
         """
         self._log_likelihoods.append(self.get_log_likelihood(scores, sampleIndicators))
+        self._max_likelihood = max(self._log_likelihoods)
         
     def _fit_iter(self, scores, sampleIndicators, **kwargs):
         """
@@ -136,7 +154,7 @@ class MulticomponentCalibrationModel:
                 raise ValueError(f"Model parameters violate monotonicity at start of component {component_num} iteration {self._iter:,d}.")
             self._update_component_parameters(scores, component_posteriors[:,component_num], component_num)
             if self.any_components_violate_monotonicity(sorted(np.unique(scores))):
-                raise ValueError(f"Updated component parameters for component {component_num} at iteration {self._iter} violate monotonicity.")
+                raise ValueError(f"Updated component parameters for component {component_num} at iteration {self._iter} violate monotonicity.\n{self.get_params()}")
         # step 3) update mixture weights for each sample
         self._update_sample_weights(scores, sampleIndicators)
 
@@ -167,7 +185,7 @@ class MulticomponentCalibrationModel:
                                                                                                                             self.updated_component_Gamma)
         # make sure the updated component parameters satisfy monotonicity
         if self.any_components_violate_monotonicity(sorted(np.unique(scores))):
-            raise ValueError(f"Updated component parameters for component {component_num} at iteration {self._iter} violate monotonicity.")
+            raise ValueError(f"Updated component parameters for component {component_num} at iteration {self._iter} violate monotonicity.\n{self.get_params()}")
 
     def _update_sample_weights(self, scores, sampleIndicators, **kwargs) -> None:
         """
@@ -229,7 +247,7 @@ class MulticomponentCalibrationModel:
         # get the last pair of component parameters for components component_num and component_num + 1 that satistfied monotonicity
         last_params_canonical = [self.get_component_params(component_num) for component_num in range(self.num_components)]
             # assign the index of the component within the tuple to update
-        updated_location = self.binary_search(scores,location_candidate, last_params_canonical, parameter_idx)
+        updated_location = self.binary_search(scores,location_candidate, last_params_canonical, parameter_idx, component_num)
         
         self.updated_component_location = updated_location
 
@@ -334,7 +352,7 @@ class MulticomponentCalibrationModel:
                 (_, D_i, G_i) = MulticomponentCalibrationModel.canonical_to_alternate(*self.get_component_params(i))
                 (skewness_i, loc_i, scale_i) = self.alternate_to_canonical(self.updated_component_location, D_i, G_i)
                 last_params_canonical.append((skewness_i, loc_i, scale_i))
-        updated_Delta = self.binary_search(scores,Delta_candidate, last_params_canonical, parameter_idx)
+        updated_Delta = self.binary_search(scores,Delta_candidate, last_params_canonical, parameter_idx, component_num)
         self.updated_component_Delta = updated_Delta
 
     def _propose_Delta_update(self, scores, component_posteriors, component_num):
@@ -390,7 +408,7 @@ class MulticomponentCalibrationModel:
                                                                            self.updated_component_Delta,
                                                                            G_i)
                 last_params_canonical.append((skewness_i, loc_i, scale_i))
-        updated_Gamma = self.binary_search(scores,Gamma_candidate, last_params_canonical,parameter_idx)
+        updated_Gamma = self.binary_search(scores,Gamma_candidate, last_params_canonical,parameter_idx, component_num)
         self.updated_component_Gamma = updated_Gamma
 
     def _propose_Gamma_update(self, scores, component_posteriors, component_num):
@@ -485,11 +503,13 @@ class MulticomponentCalibrationModel:
         -------
         None
         """
+        print("Initializing model parameters...")
         initializations = 0
         initialized = False
         while not initialized and initializations < 100:
+            print(f"Initialization {initializations}...")
             # 1) Fit a k-means model to all assay scores
-            self.kmeans_model = KMeans(n_clusters=self.num_components)
+            self.kmeans_model = KMeans(n_clusters=self.num_components,init='random',n_init=1)
             scores = scores.reshape((-1, 1))
             self.kmeans_model.fit(scores[np.random.randint(0, scores.shape[0], scores.shape[0])])
             # reorder cluster_centers_ from min to max
@@ -497,11 +517,13 @@ class MulticomponentCalibrationModel:
             component_assignments = self.kmeans_model.predict(scores)
             comp_nums,comp_counts = np.unique(component_assignments,return_counts=True)
             if len(comp_nums) < self.num_components or (comp_counts < 2).any():
+                print(f"Identified {len(comp_nums)} components with counts {comp_counts}.")
                 initializations += 1
                 continue
             # 2) Initialize skew-normal component parameters
             self._initialize_skew_normal_parameters(scores, component_assignments, skew_directions, max_skew_init_magnitude, **kwargs)
             if (self.scales == 0).any():
+                print(f"Found a component with scale 0.\n{self.scales}")
                 initializations += 1
                 continue
             # 3) Initialize the mixture weights
@@ -509,8 +531,13 @@ class MulticomponentCalibrationModel:
             
             # 4) adjust the skew-normal component parameters to enforce monotonicity between FA and FN components
             initialized = self.adjust_to_monotonicity(np.unique(scores))
+            initializations += 1
         if not initialized:
-            raise ValueError("Could not initialize model parameters.")
+            raise ValueError(f"Could not initialize model parameters; Last params:\nskewness:{self.skewness}\nlocs:{self.locs}\nscales:{self.scales}")
+        if self.any_components_violate_monotonicity(np.unique(scores)):
+            raise ValueError("Model parameters violate monotonicity.")
+        print("Model parameters initialized.")
+        print(f"Skews: {self.skewness}\nLocs: {self.locs}\nScales: {self.scales}")
 
     def _initialize_skew_normal_parameters(self, scores : np.array,
                                             component_assignments : np.array,
@@ -575,21 +602,58 @@ class MulticomponentCalibrationModel:
             Adjusted skewness, locs, and scales parameters.
         """
         reduction_iters = 0
-        delta = .05
+        delta = .1
         middleCompIndex = self.num_components // 2 # 3->1, 4->2, 5->2
+        uscores = np.unique(scores)
+        uscores.sort()
         while self.any_components_violate_monotonicity(scores) and reduction_iters < kwargs.get("max_monotonicity_reduction_iters", 100):
+            self.debug_monotonicity(scores)
             reduction_iters += 1
+            # for i in range(self.num_components-1):
+            #     if MulticomponentCalibrationModel.parameters_violate_monotonicity(uscores, [self.skewness[i],self.locs[i],self.scales[i]],
+            #                                                                       [self.skewness[i+1],self.locs[i+1],self.scales[i+1]]):
+            #         widest = i
+            #         if self.scales[i] < self.scales[i+1]:
+            #             widest = i+1
+            #         self.scales[widest] *= 0.5
+            #         break
             for i in range(self.num_components):
-                self.skewness[i] *= -0.95
-                self.scales[i] *= 0.95
+                # self.skewness[i] *= 0.75
+                self.scales[i] *= 1.1
                 if i < middleCompIndex:
                     self.locs[i] -= delta*(abs(i - middleCompIndex))
                 elif ((self.num_components % 2 == 0) and (i >= middleCompIndex)) or ((self.num_components % 2 ==1) and (i > middleCompIndex)): # if even number of components, move the remaining components to the right
-                    self.locs[i] += delta*(abs(i - middleCompIndex))
+                    self.locs[i] += delta*(1 + abs(i - middleCompIndex))
+            
         if self.any_components_violate_monotonicity(scores):
             # print("Could not enforce monotonicity between components.")
             return False
         return True
+    
+    def debug_monotonicity(self, scores):
+        fig,ax = plt.subplots(self.num_components, 2, figsize=(15, 5 * (self.num_components - 1)))
+        score_range = np.array(sorted(scores))
+        for i in range(self.num_components - 1):
+            f = skewnorm.logpdf(score_range, self.skewness[i], self.locs[i], self.scales[i])
+            g = skewnorm.logpdf(score_range, self.skewness[i+1], self.locs[i+1], self.scales[i+1])
+            diffs = np.diff(f-g)
+            max_diff, min_diff = np.max(diffs), np.min(diffs)
+            ax[i,0].plot(score_range, f-g)
+            ax[i,0].set_title(f"Component {i} - Component {i+1}, max_diff: {max_diff:.2f}, min_diff: {min_diff:.2f}")
+            f = skewnorm.pdf(score_range, self.skewness[i], self.locs[i], self.scales[i])
+            g = skewnorm.pdf(score_range, self.skewness[i+1], self.locs[i+1], self.scales[i+1])
+            ax[i,1].plot(score_range, f,label=f"Component {i}")
+            ax[i,1].plot(score_range, g, label=f"Component {i+1}")
+            ax[i,1].legend()
+        f = skewnorm.pdf(score_range, self.skewness[0], self.locs[0], self.scales[0])
+        g = skewnorm.pdf(score_range, self.skewness[-1], self.locs[-1], self.scales[-1])
+        ax[-1,0].plot(score_range, f-g)
+        ax[-1,0].set_title(f"Component 0 - Component {self.num_components-1}")
+        ax[-1,1].plot(score_range, f,label="Component 0")
+        ax[-1,1].plot(score_range, g, label=f"Component {self.num_components-1}")
+        ax[-1,1].legend()
+        fig.savefig("debug_monotonicity.png")
+        plt.close(fig)
     
     def any_components_violate_monotonicity(self, scores, **kwargs) -> bool:
         """
@@ -1045,7 +1109,7 @@ class MulticomponentCalibrationModel:
         """
         pass
 
-    def binary_search(self,scores,candiate_value, previous_canonical_param_pair, parameter_idx,**kwargs):
+    def binary_search(self,scores,candiate_value, previous_canonical_param_pair, parameter_idx, component_num,**kwargs):
         """
         Run binary search to find the parameter value that satisfies monotonicity.
 
@@ -1130,4 +1194,6 @@ class MulticomponentCalibrationModel:
             assert not MulticomponentCalibrationModel.parameters_violate_monotonicity(unique_scores,
                                                                                         self.alternate_to_canonical(*updated_params[compI]),
                                                                                         self.alternate_to_canonical(*updated_params[compJ]))
+            # print(f"Component {compI} and {compJ} are monotonic.")
+        print(f"All monotoniciy constraints satisfied binary search of parameter {parameter_idx} for component {component_num}.")
         return lower_bound

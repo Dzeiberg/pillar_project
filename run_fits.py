@@ -45,7 +45,7 @@ def run_single_fit(dataset_name, data_filepath, save_dir,**kwargs):
         f.write(json.dumps(result, indent=4))
 
 if __name__ == "__main__":
-    fire.Fire()
-    # run_single_fit("PTEN_Mighell_2018",
-    #                "/data/dzeiberg/pillar_project/dataframe/pillar_data_condensed_01_28_25.csv",
-    #                "/data/dzeiberg/pillar_project/test_fit_PTEN_Mighell_2018.json")
+    # fire.Fire()
+    run_single_fit("XRCC2_unpublished",
+                   "/data/dzeiberg/pillar_project/dataframe/pillar_data_condensed_01_28_25.csv",
+                   "/data/dzeiberg/pillar_project/test_fit.json", num_fits=20,core_limit=1,component_range=[3,])

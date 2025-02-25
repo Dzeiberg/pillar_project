@@ -70,14 +70,19 @@ def sample_specific_bootstrap(sample_assignments):
             continue
         sample_eval = []
         fails = 0
-        while not len(sample_eval) and fails < 100:
-            sample_train = np.random.choice(sample_indices, size=len(sample_indices), replace=True)
-            sample_eval = np.setdiff1d(sample_indices, sample_train)
-            fails += 1
-        if fails >= 100:
-            raise ValueError("Failed to generate bootstrap split")
+        if len(sample_indices) == 1:
+            sample_train = sample_indices
+            sample_eval = []
+        else:
+            while not len(sample_eval) and fails < 100:
+                sample_train = np.random.choice(sample_indices, size=len(sample_indices), replace=True)
+                sample_eval = np.setdiff1d(sample_indices, sample_train)
+                fails += 1
+            if fails >= 100:
+                raise ValueError("Failed to generate bootstrap split")
         train_indices.append(sample_train)
-        eval_indices.append(sample_eval)
+        if len(sample_eval):
+            eval_indices.append(sample_eval)
     train_indices = np.concatenate(train_indices)
     eval_indices = np.concatenate(eval_indices)
     return train_indices, eval_indices
@@ -127,18 +132,23 @@ class Fit:
         val_sample_assignments = sample_assignments[val_indices]
         core_limit = kwargs.get('core_limit',-1)
         if core_limit == 1:
+            print(f"Running {NUM_FITS} fits for each of {len(component_range)} components sequentially")
             models = [tryToFit(train_observations,train_sample_assignments,num_components, **kwargs) for i in range(NUM_FITS) for num_components in component_range]
         else:
-            models = Parallel(n_jobs=kwargs.get('core_limit',-1),verbose=10)(delayed(tryToFit)(train_observations,
+            print(f"Running {NUM_FITS} fits for each of {len(component_range)} components with {core_limit} cores")
+            models = Parallel(n_jobs=core_limit,verbose=10)(delayed(tryToFit)(train_observations,
                                                                                             train_sample_assignments, num_components, **kwargs) \
                                                                         for i in range(NUM_FITS) for num_components in component_range)
         # models = sorted(models,key=lambda x: x._log_likelihoods[-1],reverse=True)
         models = [m for m in models if not np.isinf(m._log_likelihoods[-1])]
         if not len(models):
             raise ValueError("No models succeeded in fitting")
+        else:
+            print(f"Successfully fit {len(models)} models")
         val_lls = [m.get_log_likelihood(val_observations,val_sample_assignments) for m in models]
         best_idx = np.nanargmax(val_lls)
         best_fit = models[best_idx]
+        print(f"Best fit: {best_fit.get_params()}")
         if np.isinf(val_lls[best_idx]):
             raise ValueError("Failed to fit model")
         self.model = best_fit
