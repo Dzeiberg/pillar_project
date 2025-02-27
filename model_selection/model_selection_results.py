@@ -62,7 +62,7 @@ def summarize_prior_distribution(priors):
         Dictionary with keys as quantiles and values as the prior estimates at those quantiles
     """
     
-    q_vals = [.05, .5, .95]
+    q_vals = [.025, .5, .975]
     quantiles = np.nanquantile(priors, q_vals)
     ret = dict(zip(q_vals, quantiles))
     ret['num_NaN'] = sum(np.isnan(priors))
@@ -95,13 +95,13 @@ def get_sample_densities(scoreset, fits):
     score_range = np.arange(scoreset.scores.min(), scoreset.scores.max(), 0.01)
     n_samples = scoreset.n_samples
     n_models = len(fits)
-    densities = np.zeros(n_models, n_samples, len(score_range))
+    densities = np.zeros((n_models, n_samples, len(score_range)))
     for i, fit in enumerate(tqdm(fits, desc="Computing densities")):
         for j in range(n_samples):
             densities[i,j] = fit.model.get_sample_density(score_range, j)
     return score_range, densities
 
-def get_thresholds(fits, priors, point_values=[1,2,4,8]):
+def get_thresholds(fits, priors,inverted,point_values=[1,2,4,8]):
     """
     Get the thresholds for each model
 
@@ -127,17 +127,17 @@ def get_thresholds(fits, priors, point_values=[1,2,4,8]):
     """
     n_models = len(fits)
     n_point_values = len(point_values)
-    pathogenic_thresholds = np.zeros(n_models, n_point_values)
-    benign_thresholds = np.zeros(n_models, n_point_values)
+    pathogenic_thresholds = np.zeros((n_models, n_point_values))
+    benign_thresholds = np.zeros((n_models, n_point_values))
     for i, fit in enumerate(tqdm(fits, desc="Computing thresholds")):
-        pathogenic_thresholds[i], benign_thresholds[i] = fit.get_thresholds(priors[i], point_values)
+        pathogenic_thresholds[i], benign_thresholds[i] = fit.get_score_thresholds(priors[i], point_values,inverted)
     return pathogenic_thresholds, benign_thresholds
     
 def summarize_thresholds(pathogenic_thresholds : np.ndarray,
                          benign_thresholds : np.ndarray,
                          final_quantile : float,
                          min_exceeding : float,
-                         flipped : bool) -> Tuple[np.ndarray, np.ndarray]:
+                         inverted : bool) -> Tuple[np.ndarray, np.ndarray]:
     """
     Get the summary of the thresholds computed for each model
 
@@ -161,21 +161,19 @@ def summarize_thresholds(pathogenic_thresholds : np.ndarray,
     final_benign_thresholds : np.ndarray
         Array of shape (n_point_values,) containing the final benign score thresholds
     """
-    final_pathogenic_thresholds = np.zeros(pathogenic_thresholds.shape[1])
-    final_benign_thresholds = np.zeros(benign_thresholds.shape[1])
-    meets_pathogenic = np.isnan(pathogenic_thresholds,axis=0) < min_exceeding
-    meets_benign = np.isnan(benign_thresholds,axis=0) < min_exceeding
-    if flipped:
+    meets_pathogenic = np.isnan(pathogenic_thresholds).sum(axis=0)/len(pathogenic_thresholds) < (1 - min_exceeding)
+    meets_benign = np.isnan(benign_thresholds).sum(axis=0)/len(benign_thresholds) < (1 - min_exceeding)
+    if inverted:
         QP = 1 - final_quantile
         QB = final_quantile
     else:
         QP = final_quantile
         QB = 1 - final_quantile
-    P = np.quantile(pathogenic_thresholds, QP, axis=0)
-    B = np.quantile(benign_thresholds, QB, axis=0)
-    final_pathogenic_thresholds[meets_pathogenic] = P[meets_pathogenic]
-    final_benign_thresholds[meets_benign] = B[meets_benign]
-    return final_pathogenic_thresholds, final_benign_thresholds
+    P = np.nanquantile(pathogenic_thresholds, QP, axis=0)
+    B = np.nanquantile(benign_thresholds, QB, axis=0)
+    P[~meets_pathogenic] = np.nan
+    B[~meets_benign] = np.nan
+    return P,B
     
 
 def plotDataset(scoreset : Scoreset,
@@ -230,18 +228,69 @@ def plotDataset(scoreset : Scoreset,
 def summarize_dataset_fits(results_dir : str|Path,
                            dataset_name : str,
                            dataset_filepath : str|Path,
+                           save_dir : str|Path,
                            **kwargs):
     scoreset, fits = load(results_dir, dataset_name, dataset_filepath, **kwargs)
     score_range, densities = get_sample_densities(scoreset, fits)
+    # medianLRPlus = np.quantile(np.log(densities[:,0] - np.log(densities[:,1])), 0.5, axis=0)
+    pathogenic_scores = scoreset.scores[scoreset.sample_assignments[:,0] == 1]
+    benign_scores = scoreset.scores[scoreset.sample_assignments[:,1] == 1]
+    inverted = pathogenic_scores.mean() > benign_scores.mean()
     priors = get_priors(scoreset, fits)
-    pathogenic_thresholds, benign_thresholds = get_thresholds(fits, priors)
-    quantile = kwargs.get("final_quantile", 0.05)
+
+    pathogenic_thresholds = np.ones((len(fits),4))*np.nan
+    benign_thresholds = np.ones((len(fits),4))*np.nan
+    pathogenic_thresholds, benign_thresholds = get_thresholds(fits, priors,inverted)
+
+    final_quantile = kwargs.get("final_quantile", 0.05)
     min_exceeding = kwargs.get("min_exceeding", 0.95)
-    medianLRPlus = np.quantile(np.log(densities[:,0] - np.log(densities[:,1])), 0.5, axis=0)
     
-    final_pathogenic_thresholds, final_benign_thresholds = summarize_thresholds(pathogenic_thresholds, benign_thresholds, **kwargs)
     
-    fig = plotDataset(scoreset, score_range, densities, priors, pathogenic_thresholds, benign_thresholds)
+    final_pathogenic_thresholds, final_benign_thresholds = summarize_thresholds(pathogenic_thresholds, benign_thresholds,
+                                                                                final_quantile,min_exceeding,inverted)
+    
+    fig = plotDataset(scoreset, score_range, densities, priors, final_pathogenic_thresholds, final_benign_thresholds)
+    summary_dict = make_summary_dict(dataset_name,fits,priors)
+    save_dir = Path(save_dir)
+    save_dir.mkdir(exist_ok=True, parents=True)
+    fig.savefig(save_dir/f"{dataset_name}_summary.png",dpi=300,bbox_inches='tight')
+    with open(save_dir/f"{dataset_name}_summary.json", "w") as f:
+        json.dump(summary_dict, f)
+    print("Saved summary to", save_dir/f"{dataset_name}_summary.json")
+
+def make_summary_dict(dataset_name : str, fits : List[Fit], priors : List[float]) -> dict:
+    """
+    Make a summary dictionary for a dataset
+
+    Arguments
+    ----------
+    dataset_name : str
+        Name of the dataset
+    fits : list[Fit]
+        List of Fit objects for the dataset
+    priors : list[float]
+        List of prior estimates for the dataset
+    
+    Returns
+    ----------
+    dict
+        Dictionary containing the summary information for the dataset
+    """
+    summary_dict = {}
+    summary_dict['dataset_name'] = dataset_name
+    summary_dict['n_results'] = len(fits)
+    prior_summary = summarize_prior_distribution(priors)
+    summary_dict['prior_summary'] = {f"{k:g}" : prior_summary[k] for k in [.025,.5,.975]}
+    fit_quality = {}
+    for fit in fits:
+        for sample_name, sample_eval in fit._eval_metrics.items():
+            if sample_name not in fit_quality:
+                fit_quality[sample_name] = []
+            fit_quality[sample_name].append(sample_eval['cdf_dist'])
+    quality_summary = {sample_name : {f"{q:g}" : np.quantile(fit_quality[sample_name], q) for q in [.025,.5,.975]} \
+                       for sample_name in fit_quality}
+    summary_dict['fit_quality_summary'] = quality_summary
+    return summary_dict
 
 def load(results_dir : str|Path,
                                  dataset_name : str,
@@ -272,7 +321,11 @@ def load(results_dir : str|Path,
     if n_components is not None:
         result_dicts = results[n_components]
     else:
-        result_dicts = [res for res_list in results.values() for res in res_list]
+        counts = {k: len(v) for k,v in results.items()}
+        n_components = max(counts, key=counts.get)
+        result_dicts = results[n_components]
+        print(f"Using {n_components} components for {dataset_name}")
+        # result_dicts = [res for res_list in results.values() for res in res_list]
     df = PillarProjectDataframe(dataset_filepath)
     scoreset = Scoreset(df.dataframe[df.dataframe.Dataset == dataset_name], missense_only=False)
     fits = [Fit.from_dict(scoreset,res) for res in result_dicts]
@@ -281,3 +334,8 @@ def load(results_dir : str|Path,
 
 if __name__ == "__main__":
     fire.Fire()
+    # summarize_dataset_fits("/data/dzeiberg/pillar_project/fit_results/",
+    #                        "RAD51D_unpublished",
+    #                        "/data/dzeiberg/pillar_project/dataframe/pillar_data_condensed_01_28_25.csv",
+    #                        "/data/dzeiberg/pillar_project/fit_summaries/",
+    #                        min_exceeding=0.0,final_quantile=0.5)

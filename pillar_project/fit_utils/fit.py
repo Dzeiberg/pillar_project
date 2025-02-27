@@ -243,24 +243,25 @@ class Fit:
         fB = self.model.get_sample_density(x, controls_idx)
         return np.log(fP) - np.log(fB)
     
-    def get_score_thresholds(self,prior, point_values):
-        print("Unsure if this is applicable for multi-component models")
-        score_thresholds_pathogenic, score_thresholds_benign = calculate_score_thresholds(self.get_log_lrPlus(self.scoreset.scores),
+    def get_score_thresholds(self,prior, point_values,inverted):
+        uscores = np.linspace(self.scoreset.scores.min(),self.scoreset.scores.max(),1000)
+        log_LR = self.get_log_lrPlus(uscores)
+        score_thresholds_pathogenic, score_thresholds_benign = calculate_score_thresholds(log_LR,
                                                                         prior,
-                                                                        self.scoreset.scores,
+                                                                        uscores,
                                                                         point_values,
-                                                                        inverted=self.scoreset_is_flipped())
+                                                                        inverted=inverted)
         return score_thresholds_pathogenic, score_thresholds_benign
     
     def to_dict(self,skip_thresholds=True):
         model_params = {k : v.tolist() for k,v in self.model.get_params().items()}
         extra = {}
-        if not skip_thresholds:
-            prior = self.get_prior_estimate()
-            lrPlus_pathogenic, lrPlus_benign = self.get_score_thresholds(prior,[1,2,4,8])
-            extra = {'prior' : prior,
-                 'score_thresholds' : {'pathogenic' : lrPlus_pathogenic.tolist(),
-                                       'benign' : lrPlus_benign.tolist()}}
+        # if not skip_thresholds:
+        #     prior = self.get_prior_estimate()
+        #     lrPlus_pathogenic, lrPlus_benign = self.get_score_thresholds(prior,[1,2,4,8])
+        #     extra = {'prior' : prior,
+        #          'score_thresholds' : {'pathogenic' : lrPlus_pathogenic.tolist(),
+        #                                'benign' : lrPlus_benign.tolist()}}
         return {**model_params,**extra,
                 'eval_metrics': {k : {'empirical_cdf' : v['empirical_cdf'].tolist(), 'model_cdf' : v['model_cdf'].tolist(), 'cdf_dist': v['cdf_dist']} for k,v in self._eval_metrics.items()},}
 

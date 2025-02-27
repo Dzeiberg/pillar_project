@@ -73,6 +73,7 @@ class MulticomponentCalibrationModel:
         - check_convergence : bool (default True)
             If True, check for convergence in the log likelihood
         """
+        self._max_likelihood = -np.inf
         self.check_convergence = kwargs.pop("check_convergence", True)
         sampleIndicators = sampleIndicators.astype(bool)
         # Validate input data
@@ -128,7 +129,7 @@ class MulticomponentCalibrationModel:
         Update the likelihood of the model.
         """
         self._log_likelihoods.append(self.get_log_likelihood(scores, sampleIndicators))
-        self._max_likelihood = max(self._log_likelihoods)
+        # self._max_likelihood = max(self._log_likelihoods)
         
     def _fit_iter(self, scores, sampleIndicators, **kwargs):
         """

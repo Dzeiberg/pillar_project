@@ -25,9 +25,9 @@ def run_single_fit(dataset_name, data_filepath, save_dir,**kwargs):
         component_range (list): List of number of components to fit (default [2,3])
         num_fits (int): Number of fits to run (default 100)
     """
-    CORELIMIT = kwargs.get("core_limit", 32)
+    # CORELIMIT = kwargs.get("core_limit", 32)
     COMPONENT_RANGE = kwargs.get("component_range", [2,3])
-    NUMFITS = kwargs.get("num_fits", 100)
+    # NUMFITS = kwargs.get("num_fits", 100)
     save_dir = Path(save_dir)
     
     data_filepath = Path(data_filepath)
@@ -37,7 +37,7 @@ def run_single_fit(dataset_name, data_filepath, save_dir,**kwargs):
     dataset_df = df.dataframe[df.dataframe.Dataset == dataset_name]
     ds = Scoreset(dataset_df,missense_only=False)
     fit = Fit(ds)
-    fit.run(COMPONENT_RANGE, core_limit=CORELIMIT, num_fits=NUMFITS)
+    fit.run(COMPONENT_RANGE,**kwargs)
     save_dir.mkdir(parents=True, exist_ok=True)
     result = fit.to_dict(skip_thresholds=True)
     with open(save_dir / f"{dataset_name}_{generate_timestamp()}.json", "w") as f:
