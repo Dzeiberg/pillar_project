@@ -27,9 +27,9 @@ do
         # echo "Running fit for $DATASET"
         echo "$DATASET ${SCORESETS_DIR}/${SET_ID}_${DATASET}.pkl ${SAVEDIR}/${SET_ID}_${DATASET}_${i}/"
         python -u run_fits.py run_single_fit \
-        $DATASET \
+        "${SET_ID}_${DATASET}" \
         ${SCORESETS_DIR}/${SET_ID}_${DATASET}.pkl \
-        ${SAVEDIR}/${SET_ID}_${DATASET}_${i}/ \
+        ${SAVEDIR} \
         --num_fits 100 \
         --core_limit 20
     done
