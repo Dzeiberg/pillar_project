@@ -27,7 +27,7 @@ def run_single_fit(scoreset_id, scoreset_filepath, save_dir,**kwargs):
         num_fits (int): Number of fits to run (default 100)
     """
     # CORELIMIT = kwargs.get("core_limit", 32)
-    COMPONENT_RANGE = kwargs.get("component_range", [2,3])
+    COMPONENT_RANGE = kwargs.pop("component_range", [2,3])
     # NUMFITS = kwargs.get("num_fits", 100)
     save_dir = Path(save_dir)
     
