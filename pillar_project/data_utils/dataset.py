@@ -42,6 +42,18 @@ class Scoreset:
         self._init_dataframe(dataframe,**kwargs)
 
     def _init_dataframe(self, dataframe : pd.DataFrame,**kwargs):
+        """
+        Initialize the scoreset from the dataframe
+
+        Parameters
+        ----------
+        dataframe : pd.DataFrame
+            The dataframe to initialize the scoreset from
+        
+        Returns
+        -------
+        None
+        """
         if not isinstance(dataframe, pd.DataFrame):
             raise TypeError("dataframe must be a pandas DataFrame")
         if len(dataframe.Dataset.unique()) != 1:
@@ -49,106 +61,128 @@ class Scoreset:
         if not len(dataframe):
             raise ValueError("dataframe must contain at least one row")
         # drop rows with NaN in auth_reported_score
+        dataframe = dataframe.assign(auth_reported_score = pd.to_numeric(dataframe.auth_reported_score,errors='coerce'))
         dataframe = dataframe.dropna(subset=["auth_reported_score"])
-        dataframe = Scoreset.remove_outliers(dataframe)
+        dataframe = Scoreset.remove_outliers(dataframe,**kwargs)
         if not len(dataframe):
             raise ValueError("dataframe must contain at least one row with a non-NaN auth_reported_score")
         self.dataframe = dataframe
-        variant_type = self.identify_variant_type(dataframe)
-        self.variants = [self._init_variant(row,variant_type) for _, row in dataframe.iterrows() \
-                         if not pd.isna([row.aa_pos, row.aa_ref, row.aa_alt]).all()]
-        self._init_variant_sample_assignments(**kwargs)
+        self.filter_by_consequence(**kwargs)
+        self.variants = [Variant(row) for _, row in self.dataframe.iterrows()]
+        self._init_matrices(**kwargs)
+
+    def filter_by_consequence(self,**kwargs):
+        self.missense_only = kwargs.get("missense_only",False)
+        self.detects_splice = self.dataframe.loc[:,'splice_measure'].unique()[0] == "Yes"
+        self.dataframe = self.dataframe[self.dataframe.Flag != "*"]
+        if not self.detects_splice:
+            self.dataframe = self.dataframe[self.dataframe.simplified_consequence != "Splice Region"]
+        if self.missense_only:
+            self.dataframe = self.dataframe[self.dataframe.simplified_consequence.isin({'Missense','Synonymous'})]
 
     @staticmethod
-    def remove_outliers(dataframe):
+    def remove_outliers(dataframe,**kwargs):
         """
-        Use Modified IQR heuristic to remove outliers from the dataframe
+        Optionally clip the dataframe to remove observations outside a specified percentile range
 
         Parameters
         ----------
         dataframe : pd.DataFrame
             The dataframe to remove outliers from
+
+        Optional Parameters
+        -------------------
+        - quantile_min : float (default: 0.0)
+        - quantile_max : float (default: 1.0)
         
         Returns
         -------
         pd.DataFrame
             The dataframe with outliers removed (1.5 IQR Rule)
         """
+        quantile_min = kwargs.get("quantile_min",0.0)
+        quantile_max = kwargs.get("quantile_max",1.0)
+        lowerbound = dataframe.auth_reported_score.quantile(quantile_min)
+        upperbound = dataframe.auth_reported_score.quantile(quantile_max)
         scores = dataframe.auth_reported_score
-        Q1 = scores.quantile(0.01)
-        Q3 = scores.quantile(0.99)
-        IQR = Q3 - Q1
-        lowerbound = Q1 - 3 * IQR
-        upperbound = Q3 + 3 * IQR
         include = (scores >= lowerbound) & (scores <= upperbound)
-        print(f"Q1: {Q1}, Q3: {Q3}, IQR: {IQR}, Lowerbound: {lowerbound}, Upperbound: {upperbound}")
-        print(f"Removing {len(dataframe) - include.sum()} outliers")
-        print(dataframe[~include].auth_reported_score)
-        print(dataframe[~include].clinvar_sig)
         return dataframe[include]
-
-    def identify_variant_type(self, dataframe) -> str:
-        types = dataframe.nucleotide_or_aa.dropna().unique()
-        if len(types) != 1:
-            raise ValueError("dataframe must contain only one variant type")
-        return types[0]
-
-    def _init_variant(self, row,variant_type):
-        return Variant(row)
-        # if variant_type == "nucleotide":
-        #     return NucleotideVariant(row)
-        # elif variant_type == "aa":
-        #     return AminoAcidVariant(row)
-        # else:
-        #     raise ValueError("nucleotide_or_aa must be either 'nucleotide' or 'aa'")
 
     def __len__(self):
         return len(self.variants)
 
-    def _init_variant_sample_assignments(self,**kwargs):
-        NSamples = 4 # P/LP, B/LB, gnomAD, synonymous
-        self._sample_assignments = np.zeros((len(self),NSamples), dtype=bool)
-        missense_only = kwargs.get("missense_only",False)
-        synonymous_exclusive = kwargs.get("synonymous_exclusive",True)
-        for i,variant in enumerate(self.variants):
-            if variant.has_synonymous():
-                self._sample_assignments[i,3] = True
-                if synonymous_exclusive:
-                    continue
-            if variant.has_gnomAD(missense_only):
-                self._sample_assignments[i,2] = True
-            if variant.has_pathogenic(missense_only):
-                self._sample_assignments[i,0] = True
-            if variant.has_benign(missense_only):
-                self._sample_assignments[i,1] = True
+    def _init_matrices(self,**kwargs):
+        self.has_synomyous = any([variant.is_synonymous for variant in self.variants])
+        if self.has_synomyous:
+            self.NSamples = 4
+            self.sample_names = ['Pathogenic/Likely Pathogenic',
+                                 'Benign/Likely Benign',
+                                 'gnomAD',
+                                 'Synonymous']
+        else:
+            self.NSamples = 3
+            self.sample_names = ['Pathogenic/Likely Pathogenic',
+                                 'Benign/Likely Benign',
+                                 'gnomAD']
+        variants_by_id = self.get_variants_by_id()
+        self.n_variants = len(variants_by_id)
+        self._sample_assignments = np.zeros((self.n_variants,self.NSamples),dtype=bool)
+        self._scores = np.zeros(self.n_variants)
+        self._ids = []
+        self._auth_labels = []
+        for idx,(_id,variants) in enumerate(variants_by_id.items()):
+            self._ids.append(_id)
+            self._scores[idx] = variants[0].auth_reported_score
+            self._auth_labels.append(variants[0].auth_reported_func_class)
+            if any([variant.is_synonymous for variant in variants]):
+                self._sample_assignments[idx,3] = True
+                continue
+            if any([variant.is_gnomAD for variant in variants]):
+                self._sample_assignments[idx,2] = True
+            if any([variant.is_pathogenic for variant in variants]):
+                self._sample_assignments[idx,0] = True
+            if any([variant.is_benign for variant in variants]):
+                self._sample_assignments[idx,1] = True
+        self.sample_counts = self._sample_assignments.sum(axis=0)
+
+    def get_variants_by_id(self):
+        """
+        Iterate over all unique Variant.ID values, returning the variants with that given ID.
+
+        Returns
+        -------
+        dict
+            A dictionary where keys are unique Variant.ID values and values are lists of Variant objects with that ID
+        """
+        variants_by_id = {}
+        for variant_id in set(variant.ID for variant in self.variants):
+            variants_by_id[variant_id] = [variant for variant in self.variants if variant.ID == variant_id]
+        return variants_by_id
 
     @property
     def sample_assignments(self):
-        return self._sample_assignments[:,self._sample_assignments.sum(axis=0) > 0]
+        return self._sample_assignments[:,self.sample_counts > 0]
     
     @property
     def n_samples(self):
-        return sum(self.sample_assignments.sum(axis=0) > 0)
+        return self.sample_assignments.shape[1]
     
     @property
     def samples(self):
-        sample_names = ["Pathogenic/Likely Pathogenic",
-                        "Benign/Likely Benign",
-                        "gnomAD",
-                        "Synonymous"]
-        for sample_index in range(4):
-            if self._sample_assignments[:,sample_index].sum() > 0:
-                yield self.scores[self._sample_assignments[:,sample_index]],sample_names[sample_index]
+        for sample_index in range(self.NSamples):
+            if self.sample_counts[sample_index] > 0:
+                yield self.scores[self._sample_assignments[:,sample_index]],self.sample_names[sample_index]
     
     @property
     def scores(self):
-        return np.array([variant.score for variant in self.variants])
+        return self._scores
     
-    def __getitem__(self, idx):
-        return self.variants[idx]
-    
+    @property
+    def scoreset_name(self):
+        return self.dataframe.Dataset.values[0]
+
     def __repr__(self):
-        out = f"Scoreset with {len(self)} total variants\n"
+        out = f"{self.scoreset_name}: {len(self)} total variants\n"
         for sample_scores, sample_name in self.samples:
             out += f"\t{sample_name}: {len(sample_scores)} variants\n"
 
@@ -161,66 +195,26 @@ class Variant:
     def _init_variant_info(self, variant_info: pd.Series):
         for k, v in variant_info.items():
             setattr(self, k, v)
-        self.init_gnomad_MAF()
-        # self.validate_variant_info()
+        self.parse_gnomAD_MAF()
         self.parse_clinvar_sig()
         self.parse_consequences()
 
     def parse_consequences(self):
-        synonymous = {'synonymous_variant','synonymous','Synonymous','Silent'}
-        missense = {'Missense','missense', 'missense_variant'}
-        consequence_values = _tolist(self.consequence)
-        flagged_values = [v == "*" for v in _tolist(self.Flag)]
-        self.synonymous_annotations = np.array([v in synonymous and not f for v,f in zip(consequence_values,flagged_values)])
-        self.missense_annotations = np.array([v in missense and not f for v,f in zip(consequence_values,flagged_values)])
+        self.is_synonymous = self.simplified_consequence == "Synonymous"
 
     def parse_clinvar_sig(self):
-        self.clinvar_sig_annotations = list(_clean_clinsigs([v for v in _tolist(self.clinvar_sig)]))
-        pathogenic = {"Pathogenic","Pathogenic/Likely_pathogenic","Likely_pathogenic"}
-        benign = {"Benign","Benign/Likely_benign","Likely_benign"}
-        # if any([v != "nan" for v in self.clinvar_sig_annotations]):
-        #     logging.info(f"clinvar_sig_annotations: {self.clinvar_sig_annotations}")
-        self.pathogenic_annotation = np.array([v in pathogenic for v in self.clinvar_sig_annotations])
-        self.benign_annotation = np.array([v in benign for v in self.clinvar_sig_annotations])
+        self.is_conflicting = self.clinvar_sig == "Conflicting classifications of pathogenicity"
+        high_quality = self.clinvar_star not in {"no assertion criteria provided",
+                                                "no classification for the single variant",
+                                                "no classification provided"}
+        self.is_benign = high_quality and self.clinvar_sig in {"Benign","Likely benign","Benign/Likely benign"}
+        self.is_pathogenic = high_quality and self.clinvar_sig in {"Pathogenic","Likely pathogenic","Pathogenic/Likely pathogenic"} 
 
-    def init_gnomad_MAF(self):
+    def parse_gnomAD_MAF(self):
         """
         It is possible that the MAF is a list of values separated by a semicolon. If so, parse the list and obtain the maximum value.
         """
-        self.maf_values = pd.to_numeric(_tolist(self.gnomad_MAF),errors='coerce')
-    
-    def has_pathogenic(self,missense_only):
-        if not missense_only:
-            return any(self.pathogenic_annotation)
-        return any(self.pathogenic_annotation & self.missense_annotations)
-        pathogenic_indices = np.where(self.pathogenic_annotation)[0]
-        if not missense_only:
-            return len(pathogenic_indices) > 0
-        missense_indices = np.where(self.missense_annotations)[0]        
-        return len(set(missense_indices).intersection(set(pathogenic_indices))) > 0
-    
-    def has_benign(self,missense_only):
-        if not missense_only:
-            return any(self.benign_annotation)
-        return any(self.benign_annotation & self.missense_annotations)
-        benign_indices = np.where(self.benign_annotation)[0]
-        if not missense_only:
-            return len(benign_indices) > 0
-        missense_indices = np.where(self.missense_annotations)[0]
-        return len(set(missense_indices).intersection(set(benign_indices))) > 0
-    
-    def has_synonymous(self):
-        return any(self.synonymous_annotations)
-    
-    def has_gnomAD(self,missense_only):
-        if not missense_only:
-            return any(self.maf_values > 0)
-        return any((self.maf_values > 0) & self.missense_annotations)
-        af_indices = np.where(self.maf_values > 0)[0]
-        if not missense_only:
-            return len(af_indices) > 0
-        missense_indices = np.where(self.missense_annotations)[0]
-        return len(set(missense_indices).intersection(set(af_indices))) > 0
+        self.is_gnomAD = not pd.isna(self.gnomad_MAF)
     
     @property
     def score(self):
@@ -229,47 +223,6 @@ class Variant:
     @staticmethod
     def is_nan(value):
         return pd.isna(value) or value == "nan"
-    
-      
-# class AminoAcidVariant(Variant):
-#     def __eq__(self,other):
-#         return self.aa_ref == other.aa_ref and \
-#             self.aa_alt == other.aa_alt and \
-#             self.aa_pos == other.aa_pos and \
-#             self.HGNC_id == other.HGNC_id
-
-# class NucleotideVariant(Variant):
-#     def validate_variant_info(self):
-#         super().validate_variant_info()
-#         return
-#         if not hasattr(self, "auth_transcript_id") \
-#             or not isinstance(self.auth_transcript_id, str) or \
-#                 not len(self.auth_transcript_id):
-#             raise ValueError("auth_transcript_id must be a string")
-#         if not hasattr(self, "transcript_pos"):
-#             raise ValueError("transcript_pos must be provided")
-#         if not hasattr(self, "transcript_ref") \
-#             or not isinstance(self.transcript_ref, str) or \
-#                 self.transcript_ref not in self.valid_nucleotides:
-#             raise ValueError(f"transcript_ref must be a valid nucleotide, not {self.transcript_ref} for {self.ID}")
-#         if not hasattr(self, "transcript_alt") \
-#             or not isinstance(self.transcript_alt, str) or \
-#                 self.transcript_alt not in self.valid_nucleotides:
-#             raise ValueError(f"transcript_alt must be a valid nucleotide, not {self.transcript_alt} for {self.ID}")
-        
-#     @property
-#     def valid_nucleotides(self):
-#         return {'A','C','G','T'}
-    
-#     def __eq__(self,other):
-#         return self.aa_ref == other.aa_ref and \
-#             self.aa_alt == other.aa_alt and \
-#             self.aa_pos == other.aa_pos and \
-#             self.HGNC_id == other.HGNC_id and \
-#             self.auth_transcript == other.auth_transcript and \
-#             self.transcript_pos == other.transcript_pos and \
-#             self.transcript_ref == other.transcript_ref and \
-#             self.transcript_alt == other.transcript_alt
 
 def summarize_datasets(dataframe_path, **kwargs):
     """
