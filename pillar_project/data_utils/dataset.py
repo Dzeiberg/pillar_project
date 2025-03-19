@@ -6,6 +6,8 @@ from fire import Fire
 from functools import reduce
 import logging
 from io import StringIO
+import gzip
+from tqdm import tqdm
 logging.basicConfig()
 logging.root.setLevel(logging.NOTSET)
 logger = logging.getLogger(__name__)
@@ -260,7 +262,67 @@ def summarize_datasets(dataframe_path, **kwargs):
     else:
         f.close()
 
+def csv_to_vcf(input_filepath, output_filepath):
+    """
+    Convert a CSV file to a gzipped VCF file.
+
+    Parameters
+    ----------
+    input_filepath : str|Path
+        The path to the input CSV file.
+    output_filepath : str|Path
+        The path to the output gzipped VCF file.
+
+    Returns
+    -------
+    None
+    """
+    input_filepath = Path(input_filepath)
+    output_filepath = Path(output_filepath)
+
+    # Read the CSV file
+    df = pd.read_csv(input_filepath)
+
+    # Filter rows with non-null hg38_start
+    df = df[df['hg38_start'].notnull()]
+
+    # Open the output file for writing
+    with open(output_filepath, 'w') as vcf_file:
+        # Write VCF header
+        vcf_file.write("##fileformat=VCFv4.2\n")
+        vcf_file.write("##source=tsv_to_vcf\n")
+        vcf_file.write("""##contig=<ID=1,length=248956422,assembly=GRCh38>
+##contig=<ID=2,length=242193529,assembly=GRCh38>
+##contig=<ID=3,length=198295559,assembly=GRCh38>
+##contig=<ID=4,length=190214555,assembly=GRCh38>
+##contig=<ID=5,length=181538259,assembly=GRCh38>
+##contig=<ID=6,length=170805979,assembly=GRCh38>
+##contig=<ID=7,length=159345973,assembly=GRCh38>
+##contig=<ID=8,length=145138636,assembly=GRCh38>
+##contig=<ID=9,length=138394717,assembly=GRCh38>
+##contig=<ID=10,length=133797422,assembly=GRCh38>
+##contig=<ID=11,length=135086622,assembly=GRCh38>
+##contig=<ID=12,length=133275309,assembly=GRCh38>
+##contig=<ID=13,length=114364328,assembly=GRCh38>
+##contig=<ID=14,length=107043718,assembly=GRCh38>
+##contig=<ID=15,length=101991189,assembly=GRCh38>
+##contig=<ID=16,length=90338345,assembly=GRCh38>
+##contig=<ID=17,length=83257441,assembly=GRCh38>
+##contig=<ID=18,length=80373285,assembly=GRCh38>
+##contig=<ID=19,length=58617616,assembly=GRCh38>
+##contig=<ID=20,length=64444167,assembly=GRCh38>
+##contig=<ID=21,length=46709983,assembly=GRCh38>
+##contig=<ID=22,length=50818468,assembly=GRCh38>
+##contig=<ID=X,length=156040895,assembly=GRCh38>
+##contig=<ID=Y,length=57227415,assembly=GRCh38>
+##contig=<ID=M,length=16569,assembly=GRCh38>
+""")
+        vcf_file.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+        df = df.sort_values(by=['Chrom', 'hg38_start'])
+        # Write VCF rows
+        for _, row in tqdm(df.iterrows(), total=len(df)):
+            vcf_file.write(f"{row['Chrom']}\t{int(row.hg38_start)}\t{row['ID']}\t{row['ref_allele']}\t{row['alt_allele']}\t.\t.\t.\n")
 
 if __name__ == "__main__":
-    Fire(summarize_datasets)
+    Fire()
     # summarize_datasets("/data/dzeiberg/pillar_project/dataframe/pillar_data_condensed_gold_standard_02_05_25.csv",missense_only=False, synonymous_exclusive=False,output_file="dataset_summary_all_synonymousNonExclusive.txt")
