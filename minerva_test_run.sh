@@ -1,22 +1,22 @@
 #!/bin/bash
 #BSUB -P acc_pejaverlab
 #BSUB -q premium
-#BSUB -W 143:59
+#BSUB -W 1:59
 #BSUB -n 20
 #BSUB -R span[hosts=1]
-#BSUB -J pillar_project[1-100]
-#BSUB -o /sc/arion/projects/pejaverlab/users/zeibed01/pillar_project/logs/pillar_project_log.out.%I
+#BSUB -J pillar_project[1-2]
+#BSUB -o /sc/arion/projects/pejaverlab/users/zeibed01/pillar_project/logs/pillar_project_test_log.out.%I
 source /hpc/users/zeibed01/.bashrc
 source activate /hpc/users/zeibed01/.conda/envs/pillar_project
 
 # set save directory
-SAVEDIR=/sc/arion/projects/pejaverlab/users/zeibed01/pillar_project/model_selection_fits_03262025/
+SAVEDIR=/sc/arion/projects/pejaverlab/users/zeibed01/pillar_project/test_fits_03262025/
 mkdir -p $SAVEDIR
 SCORESETS_DIR=/sc/arion/projects/pejaverlab/users/zeibed01/pillar_project/final_scoresets/
 datasets_file="Datasets_03262025.csv"
 NDatasets=$(wc -l "${datasets_file}" | awk '{print $1}')
 
-for i in {1..100}
+for i in {1..2}
 do
     echo "Iteration $i"
     for (( SLURM_ARRAY_TASK_ID=1; SLURM_ARRAY_TASK_ID<=$NDatasets; SLURM_ARRAY_TASK_ID++ ))
@@ -29,7 +29,7 @@ do
         "${DATASET}" \
         ${SCORESETS_DIR}/${DATASET}.pkl \
         ${SAVEDIR} \
-        --num_fits 100 \
+        --num_fits 10 \
         --core_limit 20
     done
 done
