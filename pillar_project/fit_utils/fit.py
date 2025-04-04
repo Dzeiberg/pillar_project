@@ -253,15 +253,9 @@ class Fit:
                                                                         inverted=inverted)
         return score_thresholds_pathogenic, score_thresholds_benign
     
-    def to_dict(self,skip_thresholds=True):
+    def to_dict(self):
         model_params = {k : v.tolist() for k,v in self.model.get_params().items()}
         extra = {}
-        # if not skip_thresholds:
-        #     prior = self.get_prior_estimate()
-        #     lrPlus_pathogenic, lrPlus_benign = self.get_score_thresholds(prior,[1,2,4,8])
-        #     extra = {'prior' : prior,
-        #          'score_thresholds' : {'pathogenic' : lrPlus_pathogenic.tolist(),
-        #                                'benign' : lrPlus_benign.tolist()}}
         return {**model_params,**extra,
                 'eval_metrics': {k : {'empirical_cdf' : v['empirical_cdf'].tolist(), 'model_cdf' : v['model_cdf'].tolist(), 'cdf_dist': v['cdf_dist']} for k,v in self._eval_metrics.items()},}
 
