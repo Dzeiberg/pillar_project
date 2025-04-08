@@ -30,6 +30,7 @@ do
         ${SAVEDIR} \
         --num_fits 100 \
         --core_limit 4 \
+        --run_index $i \
         --component_range [2,]
     done
 done

@@ -253,6 +253,7 @@ def plotDataset(scoreset : Scoreset,
         score_limits = [min(scoreset.scores), max(scoreset.scores)]
     n_samples= densities.shape[1]
     fig, ax = plt.subplots(n_samples, 1, figsize=(10, 5*n_samples))
+    line_styles = ['-', '--', ':', '-.', (0, (3, 10, 1, 10))]
     for sample_num,(sample_scores, sample_name) in enumerate(scoreset.samples):
         sample_densities = densities[:,sample_num]
         lower,median,upper = np.quantile(sample_densities, [.05,.5,.95], axis=0)
@@ -272,7 +273,7 @@ def plotDataset(scoreset : Scoreset,
             median_prior,lower,upper = np.quantile(priors,[.5, .025, .975])
             title += f" (prior: {median_prior:.3f} [{lower:.3f}, {upper:.3f}])"
         ax[sample_num].set_title(title)
-        for sP,sB,ls in zip(pathogenic_thresholds, benign_thresholds,[":","-.","--","-"]):
+        for sP,sB,ls in zip(pathogenic_thresholds, benign_thresholds,line_styles):
             ax[sample_num].axvline(sB,linestyle=ls,color='blue')
             ax[sample_num].axvline(sP,linestyle=ls,color='red')
         ax[sample_num].set_xlim(*score_limits)
