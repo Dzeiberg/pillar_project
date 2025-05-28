@@ -74,6 +74,7 @@ def sample_specific_bootstrap(sample_assignments):
             sample_train = sample_indices
             sample_eval = []
         else:
+            sample_train = []
             while not len(sample_eval) and fails < 100:
                 sample_train = np.random.choice(sample_indices, size=len(sample_indices), replace=True)
                 sample_eval = np.setdiff1d(sample_indices, sample_train)
@@ -90,6 +91,7 @@ def sample_specific_bootstrap(sample_assignments):
 class Fit:
     def __init__(self, scoreset: Scoreset):
         self.scoreset = scoreset
+        self.fit_result = {}
 
     @classmethod
     def from_dict(cls, scoreset, fit_dict):
@@ -140,7 +142,7 @@ class Fit:
                                                                                             train_sample_assignments, num_components, **kwargs) \
                                                                         for i in range(NUM_FITS) for num_components in component_range)
         # models = sorted(models,key=lambda x: x._log_likelihoods[-1],reverse=True)
-        models = [m for m in models if not np.isinf(m._log_likelihoods[-1])]
+        models = [m for m in models if isinstance(m, MulticomponentCalibrationModel) and not np.isinf(m._log_likelihoods[-1])]
         if not len(models):
             raise ValueError("No models succeeded in fitting")
         else:
@@ -295,7 +297,7 @@ def prior_from_weights(weights : np.ndarray, population_idx : int=2, controls_id
         return np.nan
     return prior
 
-def thresholds_from_prior(prior, point_values) -> Tuple[List[float]]:
+def thresholds_from_prior(prior, point_values) -> Tuple[np.ndarray, np.ndarray]:
     """
     Get the evidence thresholds (LR+ values) for each point value given a prior
 
@@ -307,14 +309,9 @@ def thresholds_from_prior(prior, point_values) -> Tuple[List[float]]:
     
     """
     exp_vals = 1 / np.array(point_values).astype(float)
-    C,num_successes = get_tavtigian_constant(prior,return_success_count=True)
-    # max number of successes is 17
-    max_successes = 17
+    C = get_tavtigian_constant(prior)
     pathogenic_evidence_thresholds = np.ones(len(point_values)) * np.nan
     benign_evidence_thresholds = np.ones(len(point_values)) * np.nan
-    if num_successes < max_successes:
-        print(f"Only ({num_successes})/{max_successes} rules for combining evidence are satisfied by constant {C}, found using prior of ({prior:.4f})")
-        return pathogenic_evidence_thresholds, benign_evidence_thresholds
         
     for strength_idx, exp_val in enumerate(exp_vals):
         pathogenic_evidence_thresholds[strength_idx] = C ** exp_val
@@ -326,8 +323,8 @@ def calculate_score_thresholds(log_LR,prior,rng,point_values,inverted=False):
     lr_thresholds_pathogenic , lr_thresholds_benign = thresholds_from_prior(clipped_prior,point_values)
     log_lr_thresholds_pathogenic = np.log(lr_thresholds_pathogenic)
     log_lr_thresholds_benign = np.log(lr_thresholds_benign)
-    pathogenic_score_thresholds = np.ones(len(log_lr_thresholds_pathogenic)) * np.nan
-    benign_score_thresholds = np.ones(len(log_lr_thresholds_benign)) * np.nan
+    pathogenic_score_thresholds = np.ones(len(log_lr_thresholds_pathogenic)) * -np.inf
+    benign_score_thresholds = np.ones(len(log_lr_thresholds_benign)) * np.inf
     for strength_idx,log_lr_threshold in enumerate(log_lr_thresholds_pathogenic):
         if log_lr_threshold is np.nan:
             continue
