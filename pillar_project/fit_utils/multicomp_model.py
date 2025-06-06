@@ -10,7 +10,7 @@ from tqdm import tqdm
 try:
     from pillar_project.fit_utils.optimization_init import optimize_distributions
 except ImportError:
-    from .optimization_init import optimize_distributions
+    from optimization_init import optimize_distributions
 class MulticomponentCalibrationModel:
     """
     Multi-component skew-normal calibration model.

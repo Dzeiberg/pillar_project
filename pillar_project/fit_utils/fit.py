@@ -1,9 +1,13 @@
-from pillar_project.fit_utils.multicomp_model import MulticomponentCalibrationModel
-from pillar_project.data_utils.dataset import Scoreset
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent))
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from multicomp_model import MulticomponentCalibrationModel
+from data_utils.dataset import Scoreset
 from scipy.stats import skewnorm
 import numpy as np
 from typing import List, Tuple
-from pillar_project.fit_utils.evidence_thresholds import get_tavtigian_constant
+from evidence_thresholds import get_tavtigian_constant
 import logging
 import sys
 from joblib import Parallel, delayed
@@ -359,3 +363,51 @@ def makeOneHot(sample_assignments):
     assert np.all(np.any(onehot,axis=0))
     assert np.all(onehot.sum(axis=1) <= 1)
     return onehot
+
+def assign_points(scores, thresholds_pathogenic, thresholds_benign, point_values):
+    """
+    Assign points to each score based on the thresholds
+
+    Required Arguments:
+    --------------------------------
+    scores -- np.ndarray (n,)
+        The scores to assign points to
+
+    thresholds_pathogenic -- np.ndarray (k,)
+        The thresholds for pathogenic evidence
+    thresholds_benign -- np.ndarray (k,)
+        The thresholds for benign evidence
+    point_values -- np.ndarray (k,)
+        The point values for each threshold
+    """
+    points = np.zeros_like(scores, dtype=int)
+    thresholds_benign = np.array(thresholds_benign)
+    thresholds_pathogenic = np.array(thresholds_pathogenic)
+    point_values = np.array(point_values)
+    canonical_scoreset = thresholds_pathogenic[0] < thresholds_benign[0]
+    for i, score in enumerate(scores):
+        if np.isnan(score):
+            continue
+        if canonical_scoreset:
+            if score <= thresholds_pathogenic[0]:
+                # is pathogenic
+                exceeds = np.where(score <= thresholds_pathogenic)[0]
+            elif score >= thresholds_benign[0]:
+                # is benign
+                exceeds = np.where(score >= thresholds_benign)[0]
+            else:
+                continue
+        else:
+            if score >= thresholds_pathogenic[0]:
+                # is pathogenic
+                exceeds = np.where(score >= thresholds_pathogenic)[0]
+            elif score <= thresholds_benign[0]:
+                # is benign
+                exceeds = np.where(score <= thresholds_benign)[0]
+            else:
+                continue
+        if len(exceeds):
+            points[i] = point_values[exceeds[-1]]
+    return points
+        
+        

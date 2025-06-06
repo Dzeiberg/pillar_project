@@ -5,9 +5,9 @@ import numpy as np
 from pathlib import Path
 import fire
 import sys
-sys.path.append("/home/dzeiberg/pillar_project")
-from pillar_project.data_utils.dataset import PillarProjectDataframe, Scoreset
-from pillar_project.fit_utils.fit import Fit
+sys.path.append(str(Path(__file__).resolve().parent.parent / "pillar_project"))
+from data_utils.dataset import PillarProjectDataframe, Scoreset
+from fit_utils.fit import Fit
 import os
 import joblib
 from tqdm import tqdm
@@ -61,29 +61,6 @@ def summarize_model_selection(results_dir):
         print(f"{dataset}:")
         for n_components, res in results.items():
             print(f"  {n_components} : {len(res)}")
-
-# def summarize_prior_distribution(priors) -> Dict[Any, float]:
-#     """
-#     Summarize the distribution of prior estimates for models fit to a dataset
-
-#     Arguments
-#     ----------
-#     priors : list[float]
-#         List of prior estimates
-    
-#     Returns
-#     ----------
-#     dict
-#         Dictionary with keys as quantiles and values as the prior estimates at those quantiles
-#     """
-    
-#     q_vals = [.025, .5, .975]
-#     quantiles = np.nanquantile(priors, q_vals)
-#     # quantiles  = [float(q) for q in quantiles]
-#     ret = dict(zip(q_vals, quantiles))
-#     ret["num_NaN"] = sum(np.isnan(priors))
-#     ret["num_fits"] = len(priors)
-#     return ret
 
 def get_priors(scoreset, fits,**kwargs):
     pathogenic_idx = kwargs.get('pathogenic_idx', 0)

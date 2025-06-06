@@ -43,6 +43,61 @@ class Scoreset:
     def __init__(self, dataframe: pd.DataFrame,**kwargs):
         self._init_dataframe(dataframe,**kwargs)
 
+    def to_json(self, output_path: Path|str):
+        """
+        Save the scoreset to a JSON file.
+
+        Parameters
+        ----------
+        output_path : Path|str
+            The path to save the JSON file to
+        
+        Returns
+        -------
+        None
+        """
+        output_path = Path(output_path)
+        if not output_path.parent.exists():
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.dataframe.to_json(output_path, orient='records', lines=True)
+    
+    @classmethod
+    def from_dataframe(cls, dataframe: pd.DataFrame, **kwargs):
+        """
+        Create a Scoreset from a pandas DataFrame.
+
+        Parameters
+        ----------
+        dataframe : pd.DataFrame
+            The dataframe to create the scoreset from
+        
+        Returns
+        -------
+        Scoreset
+            A Scoreset object initialized with the given dataframe
+        """
+        return cls(dataframe, **kwargs)
+    @classmethod
+    def from_json(cls, json_path: Path|str, **kwargs):
+        """
+        Create a Scoreset from a JSON file.
+
+        Parameters
+        ----------
+        json_path : Path|str
+            The path to the JSON file to create the scoreset from
+        
+        Returns
+        -------
+        Scoreset
+            A Scoreset object initialized with the data from the JSON file
+        """
+        json_path = Path(json_path)
+        if not json_path.exists():
+            raise FileNotFoundError(f"JSON file not found: {json_path}")
+        dataframe = pd.read_json(json_path, orient='records', lines=True)
+        return cls(dataframe, **kwargs)
+
     def _init_dataframe(self, dataframe : pd.DataFrame,**kwargs):
         """
         Initialize the scoreset from the dataframe
