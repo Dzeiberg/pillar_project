@@ -202,7 +202,8 @@ class Variant:
         self.parse_consequences()
 
     def parse_consequences(self):
-        self.is_synonymous = self.simplified_consequence == "Synonymous"
+        self.is_synonymous = (self.simplified_consequence == "Synonymous") or \
+            (self.simplified_consequence == "synonymous_variant")
 
     def parse_clinvar_sig(self):
         self.is_conflicting = self.clinvar_sig == "Conflicting classifications of pathogenicity"
