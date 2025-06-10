@@ -5,13 +5,13 @@ import numpy as np
 from pathlib import Path
 import fire
 import sys
-sys.path.append("/home/dzeiberg/pillar_project")
-from pillar_project.data_utils.dataset import PillarProjectDataframe, Scoreset
-from pillar_project.fit_utils.fit import Fit
+sys.path.append(str(Path(__file__).resolve().parent.parent / "pillar_project"))
+from data_utils.dataset import PillarProjectDataframe, Scoreset
+from fit_utils.fit import Fit
 import os
 import joblib
 from tqdm import tqdm
-from typing import Optional,List,Tuple
+from typing import Optional,List,Tuple,Dict,Any
 from joblib import Parallel, delayed
 import signal
 from random import seed, shuffle
@@ -62,32 +62,16 @@ def summarize_model_selection(results_dir):
         for n_components, res in results.items():
             print(f"  {n_components} : {len(res)}")
 
-def summarize_prior_distribution(priors):
-    """
-    Summarize the distribution of prior estimates for models fit to a dataset
-
-    Arguments
-    ----------
-    priors : list[float]
-        List of prior estimates
-    
-    Returns
-    ----------
-    dict
-        Dictionary with keys as quantiles and values as the prior estimates at those quantiles
-    """
-    
-    q_vals = [.025, .5, .975]
-    quantiles = np.nanquantile(priors, q_vals)
-    ret = dict(zip(q_vals, quantiles))
-    ret['num_NaN'] = sum(np.isnan(priors))
-    ret['num_fits'] = len(priors)
-    return ret
-
-def get_priors(scoreset, fits):
-     population_scores = scoreset.scores[scoreset.sample_assignments[:,2] == 1]
-     priors = [fit.get_prior_estimate(population_scores) for fit in tqdm(fits, desc="Estimating priors")]
-     return priors
+def get_priors(scoreset, fits,**kwargs):
+    pathogenic_idx = kwargs.get('pathogenic_idx', 0)
+    benign_idx = kwargs.get('benign_idx', 1)
+    population_idx = kwargs.get('population_idx', 2)
+    population_scores = scoreset.scores[scoreset.sample_assignments[:,population_idx] == 1]
+     
+    priors = [fit.get_prior_estimate(population_scores,
+                                        pathogenic_idx=pathogenic_idx,
+                                        benign_idx=benign_idx) for fit in tqdm(fits, desc="Estimating priors")]
+    return priors
 
 def get_sample_densities(scoreset, fits):
     """
@@ -116,7 +100,7 @@ def get_sample_densities(scoreset, fits):
             densities[i,j] = fit.model.get_sample_density(score_range, j)
     return score_range, densities
 
-def get_thresholds(fits, priors,inverted,point_values=[1,2,3,4,8],**kwargs):
+def get_thresholds(fits, medianPrior,inverted,point_values=[1,2,3,4,8],**kwargs):
     """
     Get the thresholds for each model
 
@@ -124,8 +108,8 @@ def get_thresholds(fits, priors,inverted,point_values=[1,2,3,4,8],**kwargs):
     ----------
     fits : list[Fit]
         List of Fit objects for the dataset
-    priors : list[float]
-        List of prior estimates for the dataset
+    medianPrior : float
+       Prior estimates for the dataset
     
     Optional Arguments
     ----------
@@ -150,21 +134,20 @@ def get_thresholds(fits, priors,inverted,point_values=[1,2,3,4,8],**kwargs):
     n_jobs = kwargs.get("n_jobs", -1)
     if n_jobs != 1:
         results = Parallel(n_jobs=-1,verbose=10)(
-            delayed(compute_thresholds)(fit, priors[i], point_values, inverted) for i, fit in enumerate(fits)
+            delayed(compute_thresholds)(fit, medianPrior, point_values, inverted) for i, fit in enumerate(fits)
         )
     else:
         results = []
         for i, fit in enumerate(tqdm(fits, desc="Computing thresholds")):
-            results.append(compute_thresholds(fit, priors[i], point_values, inverted))
+            results.append(compute_thresholds(fit, medianPrior, point_values, inverted))
 
-    for i, (pathogenic, benign) in enumerate(results):
+    for i, (pathogenic, benign) in enumerate(results): # type: ignore
         pathogenic_thresholds[i], benign_thresholds[i] = pathogenic, benign
     return pathogenic_thresholds, benign_thresholds
     
 def summarize_thresholds(pathogenic_thresholds : np.ndarray,
                          benign_thresholds : np.ndarray,
                          final_quantile : float,
-                         min_exceeding : float,
                          inverted : bool) -> Tuple[np.ndarray, np.ndarray]:
     """
     Get the summary of the thresholds computed for each model
@@ -177,9 +160,7 @@ def summarize_thresholds(pathogenic_thresholds : np.ndarray,
         Array of shape (n_models, n_point_values) containing the benign score thresholds for each model
     final_quantile : float
         Quantile to use for the final threshold [0,1]
-    min_exceeding : float
-        Minimum fraction of models reaching the given evidence strength to use the final threshold
-    flipped : bool
+    inverted : bool
         Whether the score set is 'flipped' from its canonical orientation
 
     Returns
@@ -189,25 +170,23 @@ def summarize_thresholds(pathogenic_thresholds : np.ndarray,
     final_benign_thresholds : np.ndarray
         Array of shape (n_point_values,) containing the final benign score thresholds
     """
-    meets_pathogenic = np.isnan(pathogenic_thresholds).sum(axis=0)/len(pathogenic_thresholds) < (1 - min_exceeding)
-    meets_benign = np.isnan(benign_thresholds).sum(axis=0)/len(benign_thresholds) < (1 - min_exceeding)
     if inverted:
         QP = 1 - final_quantile
         QB = final_quantile
+        pathogenic_thresholds[np.isinf(pathogenic_thresholds)] *= -1
+        benign_thresholds[np.isinf(benign_thresholds)] *= -1
     else:
         QP = final_quantile
         QB = 1 - final_quantile
-    P = np.nanquantile(pathogenic_thresholds, QP, axis=0)
-    B = np.nanquantile(benign_thresholds, QB, axis=0)
-    P[~meets_pathogenic] = np.nan
-    B[~meets_benign] = np.nan
+    P = np.quantile(pathogenic_thresholds, QP, axis=0)
+    B = np.quantile(benign_thresholds, QB, axis=0)
     return P,B
     
 
 def plotDataset(scoreset : Scoreset,
                 score_range : np.ndarray,
                 densities : np.ndarray,
-                priors : np.ndarray,
+                medianPrior : float,
                 pathogenic_thresholds : np.ndarray,
                 benign_thresholds : np.ndarray,**kwargs):
     """
@@ -221,8 +200,8 @@ def plotDataset(scoreset : Scoreset,
         Array of shape (n_score_range,) containing the range of scores to compute densities over
     densities : np.ndarray
         Array of shape (n_models, n_samples, n_score_range) containing the densities for each model and sample
-    priors : np.ndarray
-        Array of shape (n_models,) containing the prior estimates for each model
+    medianPrior : float
+        Prior estimate for each model
     pathogenic_thresholds : np.ndarray
         Array of shape (n_point_values,) containing the pathogenic score thresholds
     benign_thresholds : np.ndarray
@@ -250,32 +229,36 @@ def plotDataset(scoreset : Scoreset,
         score_range = score_range[keep]
         densities = densities[:,:,keep]
     else:
-        score_limits = [min(scoreset.scores), max(scoreset.scores)]
+        score_limits = [np.min(scoreset.scores), np.max(scoreset.scores)]
     n_samples= densities.shape[1]
     fig, ax = plt.subplots(n_samples, 1, figsize=(10, 5*n_samples))
+    if n_samples == 1:
+        axes = [ax]  # Ensure ax is always a list
+    else:
+        axes = [ax] if not isinstance(ax, (list, np.ndarray)) else list(ax)  # Ensure ax is a list
+    line_styles = ['-', '--', ':', '-.', (0, (3, 10, 1, 10))]
     for sample_num,(sample_scores, sample_name) in enumerate(scoreset.samples):
         sample_densities = densities[:,sample_num]
         lower,median,upper = np.quantile(sample_densities, [.05,.5,.95], axis=0)
-        ax[sample_num].fill_between(score_range, lower, upper, alpha=0.5, color='blue')
-        ax[sample_num].plot(score_range, median, color='blue')
+        axes[sample_num].fill_between(score_range, lower, upper, alpha=0.5, color='blue')
+        axes[sample_num].plot(score_range, median, color='blue')
         signal.signal(signal.SIGALRM, handler)
         signal.alarm(10)
         sample_scores = sample_scores[(sample_scores >= score_limits[0]) & (sample_scores <= score_limits[1])]
         try:
-            sns.histplot(sample_scores,ax=ax[sample_num], stat='density')
+            sns.histplot(sample_scores,ax=axes[sample_num], stat='density')
         except Exception as e:
             print(e)
-            ax[sample_num].hist(sample_scores, density=True)
+            axes[sample_num].hist(sample_scores, density=True)
         signal.alarm(0)
         title = sample_name
         if sample_name == "gnomAD":
-            median_prior,lower,upper = np.quantile(priors,[.5, .025, .975])
-            title += f" (prior: {median_prior:.3f} [{lower:.3f}, {upper:.3f}])"
-        ax[sample_num].set_title(title)
-        for sP,sB,ls in zip(pathogenic_thresholds, benign_thresholds,[":","-.","--","-"]):
-            ax[sample_num].axvline(sB,linestyle=ls,color='blue')
-            ax[sample_num].axvline(sP,linestyle=ls,color='red')
-        ax[sample_num].set_xlim(*score_limits)
+            title += f" (prior: {medianPrior:.3f})"
+        axes[sample_num].set_title(title)
+        for sP,sB,ls in zip(pathogenic_thresholds, benign_thresholds,line_styles):
+            axes[sample_num].axvline(sB,linestyle=ls,color='blue')
+            axes[sample_num].axvline(sP,linestyle=ls,color='red')
+        axes[sample_num].set_xlim(*score_limits)
     return fig
     
 
@@ -286,7 +269,7 @@ def summarize_dataset_fits(fits_dir : str|Path,
                            summary_dir : str|Path,
                            **kwargs):
     try:
-        scoreset, fits,component_fit_counts = load(fits_dir, dataset_name, scoresets_dir, **kwargs)
+        scoreset, fits, n_component_counts = load(fits_dir, dataset_name, scoresets_dir, **kwargs)
     except ValueError:
         print(f"No fits for {dataset_name} in {fits_dir}")
         return
@@ -295,21 +278,24 @@ def summarize_dataset_fits(fits_dir : str|Path,
     benign_scores = scoreset.scores[scoreset.sample_assignments[:,1] == 1]
     inverted = pathogenic_scores.mean() > benign_scores.mean()
     priors = get_priors(scoreset, fits)
+    if np.isnan(priors).any():
+        raise ValueError(f"NaN priors for {dataset_name} in {fits_dir}")
+    medianPrior = float(np.median(priors))
 
     pathogenic_thresholds = np.ones((len(fits),4))*np.nan
     benign_thresholds = np.ones((len(fits),4))*np.nan
-    pathogenic_thresholds, benign_thresholds = get_thresholds(fits, priors,inverted,**kwargs)
+    pathogenic_thresholds, benign_thresholds = get_thresholds(fits, medianPrior,inverted,**kwargs)
 
     final_quantile = kwargs.get("final_quantile", 0.05)
-    min_exceeding = kwargs.get("min_exceeding", 0.95)
     
     
     final_pathogenic_thresholds, final_benign_thresholds = summarize_thresholds(pathogenic_thresholds, benign_thresholds,
-                                                                                final_quantile,min_exceeding,inverted)
+                                                                                final_quantile,inverted)
     
-    fig = plotDataset(scoreset, score_range, densities, priors, final_pathogenic_thresholds, final_benign_thresholds,**kwargs)
+    fig = plotDataset(scoreset, score_range, densities, medianPrior, final_pathogenic_thresholds, final_benign_thresholds,**kwargs)
     summary_dict = make_summary_dict(dataset_name,fits,priors)
-    summary_dict['component_fit_counts'] = component_fit_counts
+    summary_dict['number_fits'] = len(fits)
+    summary_dict["n_component_counts"] = n_component_counts
     summary_dict['pathogenic_thresholds'] = list(final_pathogenic_thresholds)
     summary_dict['benign_thresholds'] = list(final_benign_thresholds)
     summary_dir = Path(summary_dir)
@@ -341,8 +327,7 @@ def make_summary_dict(dataset_name : str, fits : List[Fit], priors : List[float]
     summary_dict['scoreset_id'] = dataset_name
     summary_dict['calibration_method'] = "Multi-sample skew normal mixture calibration"
     summary_dict['n_results'] = len(fits)
-    prior_summary = summarize_prior_distribution(priors)
-    summary_dict['prior_summary'] = {f"{k:g}" : prior_summary[k] for k in [.025,.5,.975]}
+    summary_dict['priors'] = list(priors)
     fit_quality = {}
     for fit in fits:
         for sample_name, sample_eval in fit._eval_metrics.items():
@@ -356,7 +341,7 @@ def make_summary_dict(dataset_name : str, fits : List[Fit], priors : List[float]
 
 def load(fits_dir : str|Path,
          dataset_name : str,
-         scoresets_dir : str|Path,**kwargs)->tuple[Scoreset, List[Fit]]:
+         scoresets_dir : str|Path,**kwargs)->tuple[Scoreset, List[Fit], Dict[int,int]]:
     """
     Load dataset and model fits
 
@@ -378,7 +363,10 @@ def load(fits_dir : str|Path,
     scoreset : Scoreset
         Scoreset object for the dataset
     fits : list[Fit]
-        List of Fit objects for the
+        List of Fit objects for the dataset
+    counts : dict
+        Dictionary containing the number of fits for each number of components
+    
     """
     n_components = kwargs.get("n_components", None)
     best_n_components = kwargs.get("best_n_components", None)
@@ -403,7 +391,7 @@ def load(fits_dir : str|Path,
     scoreset = joblib.load(Path(scoresets_dir)/f"{dataset_name}.pkl")
     n_fits_to_load = kwargs.get("n_fits_to_load", None)
     shuffle(result_lists)
-    if n_fits_to_load < 0:
+    if n_fits_to_load is None:
         n_fits_to_load = len(result_lists)
     elif len(result_lists) < n_fits_to_load:
         print(f"Warning: Only loading the {len(result_lists)} fits available for {dataset_name}, requesting {n_fits_to_load}")
