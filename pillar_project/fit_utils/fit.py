@@ -259,7 +259,7 @@ class Fit:
                                                                         inverted=inverted)
         return score_thresholds_pathogenic, score_thresholds_benign
     
-    def to_dict(self):
+    def to_dict(self,**kwargs):
         model_params = {k : v.tolist() for k,v in self.model.get_params().items()}
         extra = {}
         return {**model_params,**extra,
