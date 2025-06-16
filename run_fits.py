@@ -39,7 +39,7 @@ def run_single_fit(scoreset_id, scoreset_filepath, save_dir,**kwargs):
     fit = Fit(scoreset)
     fit.run(COMPONENT_RANGE,**kwargs)
     save_dir.mkdir(parents=True, exist_ok=True)
-    result = fit.to_dict(skip_thresholds=True)
+    result = fit.to_dict()
     run_index = kwargs.get("run_index",0)
     fp = fp = save_dir / f"{scoreset_id}_{generate_timestamp()}_{datetime.datetime.now().microsecond}_{run_index}.json"
     while fp.exists():
