@@ -30,6 +30,8 @@ do
         ${SCORESETS_DIR}/${DATASET}.pkl \
         ${SAVEDIR} \
         --num_fits 100 \
-        --core_limit 20
+        --core_limit 20 \
+        --run_index $i \
+        --component_range [2,3] \
     done
 done

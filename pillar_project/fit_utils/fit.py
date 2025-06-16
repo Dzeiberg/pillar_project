@@ -1,9 +1,13 @@
-from pillar_project.fit_utils.multicomp_model import MulticomponentCalibrationModel
-from pillar_project.data_utils.dataset import Scoreset
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent))
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from multicomp_model import MulticomponentCalibrationModel
+from data_utils.dataset import Scoreset
 from scipy.stats import skewnorm
 import numpy as np
 from typing import List, Tuple
-from pillar_project.fit_utils.evidence_thresholds import get_tavtigian_constant
+from evidence_thresholds import get_tavtigian_constant
 import logging
 import sys
 from joblib import Parallel, delayed
@@ -74,6 +78,7 @@ def sample_specific_bootstrap(sample_assignments):
             sample_train = sample_indices
             sample_eval = []
         else:
+            sample_train = []
             while not len(sample_eval) and fails < 100:
                 sample_train = np.random.choice(sample_indices, size=len(sample_indices), replace=True)
                 sample_eval = np.setdiff1d(sample_indices, sample_train)
@@ -90,6 +95,7 @@ def sample_specific_bootstrap(sample_assignments):
 class Fit:
     def __init__(self, scoreset: Scoreset):
         self.scoreset = scoreset
+        self.fit_result = {}
 
     @classmethod
     def from_dict(cls, scoreset, fit_dict):
@@ -140,7 +146,7 @@ class Fit:
                                                                                             train_sample_assignments, num_components, **kwargs) \
                                                                         for i in range(NUM_FITS) for num_components in component_range)
         # models = sorted(models,key=lambda x: x._log_likelihoods[-1],reverse=True)
-        models = [m for m in models if not np.isinf(m._log_likelihoods[-1])]
+        models = [m for m in models if isinstance(m, MulticomponentCalibrationModel) and not np.isinf(m._log_likelihoods[-1])]
         if not len(models):
             raise ValueError("No models succeeded in fitting")
         else:
@@ -253,7 +259,7 @@ class Fit:
                                                                         inverted=inverted)
         return score_thresholds_pathogenic, score_thresholds_benign
     
-    def to_dict(self):
+    def to_dict(self,**kwargs):
         model_params = {k : v.tolist() for k,v in self.model.get_params().items()}
         extra = {}
         return {**model_params,**extra,
@@ -295,7 +301,7 @@ def prior_from_weights(weights : np.ndarray, population_idx : int=2, controls_id
         return np.nan
     return prior
 
-def thresholds_from_prior(prior, point_values) -> Tuple[List[float]]:
+def thresholds_from_prior(prior, point_values) -> Tuple[np.ndarray, np.ndarray]:
     """
     Get the evidence thresholds (LR+ values) for each point value given a prior
 
@@ -307,14 +313,9 @@ def thresholds_from_prior(prior, point_values) -> Tuple[List[float]]:
     
     """
     exp_vals = 1 / np.array(point_values).astype(float)
-    C,num_successes = get_tavtigian_constant(prior,return_success_count=True)
-    # max number of successes is 17
-    max_successes = 17
+    C = get_tavtigian_constant(prior)
     pathogenic_evidence_thresholds = np.ones(len(point_values)) * np.nan
     benign_evidence_thresholds = np.ones(len(point_values)) * np.nan
-    if num_successes < max_successes:
-        print(f"Only ({num_successes})/{max_successes} rules for combining evidence are satisfied by constant {C}, found using prior of ({prior:.4f})")
-        return pathogenic_evidence_thresholds, benign_evidence_thresholds
         
     for strength_idx, exp_val in enumerate(exp_vals):
         pathogenic_evidence_thresholds[strength_idx] = C ** exp_val
@@ -326,8 +327,8 @@ def calculate_score_thresholds(log_LR,prior,rng,point_values,inverted=False):
     lr_thresholds_pathogenic , lr_thresholds_benign = thresholds_from_prior(clipped_prior,point_values)
     log_lr_thresholds_pathogenic = np.log(lr_thresholds_pathogenic)
     log_lr_thresholds_benign = np.log(lr_thresholds_benign)
-    pathogenic_score_thresholds = np.ones(len(log_lr_thresholds_pathogenic)) * np.nan
-    benign_score_thresholds = np.ones(len(log_lr_thresholds_benign)) * np.nan
+    pathogenic_score_thresholds = np.ones(len(log_lr_thresholds_pathogenic)) * -np.inf
+    benign_score_thresholds = np.ones(len(log_lr_thresholds_benign)) * np.inf
     for strength_idx,log_lr_threshold in enumerate(log_lr_thresholds_pathogenic):
         if log_lr_threshold is np.nan:
             continue
@@ -362,3 +363,51 @@ def makeOneHot(sample_assignments):
     assert np.all(np.any(onehot,axis=0))
     assert np.all(onehot.sum(axis=1) <= 1)
     return onehot
+
+def assign_points(scores, thresholds_pathogenic, thresholds_benign, point_values):
+    """
+    Assign points to each score based on the thresholds
+
+    Required Arguments:
+    --------------------------------
+    scores -- np.ndarray (n,)
+        The scores to assign points to
+
+    thresholds_pathogenic -- np.ndarray (k,)
+        The thresholds for pathogenic evidence
+    thresholds_benign -- np.ndarray (k,)
+        The thresholds for benign evidence
+    point_values -- np.ndarray (k,)
+        The point values for each threshold
+    """
+    points = np.zeros_like(scores, dtype=int)
+    thresholds_benign = np.array(thresholds_benign)
+    thresholds_pathogenic = np.array(thresholds_pathogenic)
+    point_values = np.array(point_values)
+    canonical_scoreset = thresholds_pathogenic[0] < thresholds_benign[0]
+    for i, score in enumerate(scores):
+        if np.isnan(score):
+            continue
+        if canonical_scoreset:
+            if score <= thresholds_pathogenic[0]:
+                # is pathogenic
+                exceeds = np.where(score <= thresholds_pathogenic)[0]
+            elif score >= thresholds_benign[0]:
+                # is benign
+                exceeds = np.where(score >= thresholds_benign)[0]
+            else:
+                continue
+        else:
+            if score >= thresholds_pathogenic[0]:
+                # is pathogenic
+                exceeds = np.where(score >= thresholds_pathogenic)[0]
+            elif score <= thresholds_benign[0]:
+                # is benign
+                exceeds = np.where(score <= thresholds_benign)[0]
+            else:
+                continue
+        if len(exceeds):
+            points[i] = point_values[exceeds[-1]]
+    return points
+        
+        

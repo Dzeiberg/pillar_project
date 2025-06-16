@@ -1,0 +1,28 @@
+#!/bin/bash
+
+DATASETS_FILEPATH=files/dataframe/Datasets_03262025.csv
+DISCOVERY_FITS_DIR=files/model_selection_04_03_2025_P3/
+SCORESETS_DIR=files/dataframe/final_scoresets
+SUMMARIES_DIR=files/model_selection_04_03_2025_P3_summaries/
+
+FINAL_QUANTILE=.05
+# ------------------- FOR FINAL SUMMARIZING --------------------
+MIN_EXCEEDING=0.95
+# ------------------- FOR MODEL SELECTION -------------------
+# MIN_EXCEEDING=.5
+
+# cat $DATASETS_FILEPATH | while read dataset_name
+# for dataset_name in "ASPA_Grønbæk-Thygesen_2024_abundance" "ASPA_Grønbæk-Thygesen_2024_toxicity" "BRCA1_Adamovich_2022_Cisplatin" "BRCA1_Adamovich_2022_HDR" 
+for dataset_name in "BRCA1_Adamovich_2022_HDR" 
+do
+    echo $dataset_name
+    python -m model_selection.model_selection_results summarize_dataset_fits \
+    $DISCOVERY_FITS_DIR \
+    $dataset_name \
+    $SCORESETS_DIR \
+    $SUMMARIES_DIR \
+    --min_exceeding=$MIN_EXCEEDING \
+    --final_quantile=$FINAL_QUANTILE \
+    --best_n_components \
+    --n_fits_to_load=1000
+done

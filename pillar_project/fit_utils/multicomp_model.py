@@ -10,7 +10,7 @@ from tqdm import tqdm
 try:
     from pillar_project.fit_utils.optimization_init import optimize_distributions
 except ImportError:
-    from .optimization_init import optimize_distributions
+    from optimization_init import optimize_distributions
 class MulticomponentCalibrationModel:
     """
     Multi-component skew-normal calibration model.
@@ -87,20 +87,16 @@ class MulticomponentCalibrationModel:
         self._iters_since_improvement = 0
         self._log_likelihoods = []
         self._update_log_likelihood(scores, sampleIndicators)
-        show_progress = kwargs.get("show_progress", True)
-        if show_progress:
-            pbar = tqdm(total=self._max_iter)
+        pbar = tqdm(total=self._max_iter)
         while not self.converged:
-            if show_progress:
-                pbar.update(1)
-                pbar.set_description(f"Log-likelihood: {self._log_likelihoods[-1]:.7f}")
+            pbar.update(1)
+            pbar.set_description(f"Log-likelihood: {self._log_likelihoods[-1]:.7f}")
             if self.any_components_violate_monotonicity(scores):
                 raise ValueError(f"Model parameters violate monotonicity at start of iteration {self._iter:,d}.")
             self._fit_iter(scores, sampleIndicators, **kwargs)
             self._iter += 1
             self._update_log_likelihood(scores,sampleIndicators)
-        if show_progress:
-            pbar.close()
+        pbar.close()
 
     @property
     def converged(self):
@@ -544,8 +540,8 @@ class MulticomponentCalibrationModel:
         print("Model parameters initialized.")
         print(f"Skews: {self.skewness}\nLocs: {self.locs}\nScales: {self.scales}")
 
-    def _initialize_skew_normal_parameters(self, scores : np.array,
-                                            component_assignments : np.array,
+    def _initialize_skew_normal_parameters(self, scores : np.ndarray,
+                                            component_assignments : np.ndarray,
                                             skew_directions : Optional[List[int]],
                                             max_skew_init_magnitude : float|int,
                                             **kwargs) -> None:
@@ -574,6 +570,7 @@ class MulticomponentCalibrationModel:
         else:
             assert len(skew_directions) == self.num_components, "The number of skew directions must match the number of components."
             assert all(skew_direction in [-1, 0, 1] for skew_direction in skew_directions), "Skew directions must be either -1 (left-skewed), 0 (standard-normal), or 1 (right-skewed)."
+        assert skew_directions is not None, "skew_directions must be provided."
         self.skewness = np.zeros(self.num_components)
         self.locs = np.zeros(self.num_components)
         self.scales = np.zeros(self.num_components)
@@ -587,7 +584,7 @@ class MulticomponentCalibrationModel:
             self.locs[componentNum] = np.mean(component_scores)
             self.scales[componentNum] = np.std(component_scores)
 
-    def adjust_to_monotonicity(self, scores : np.array, **kwargs) -> bool:
+    def adjust_to_monotonicity(self, scores : np.ndarray, **kwargs) -> bool:
         """
         Adjust the skew-normal component parameters to enforce monotonicity between the FN and FA components.
 
@@ -609,7 +606,7 @@ class MulticomponentCalibrationModel:
         initialParmas = [[self.skewness[i],self.locs[i],self.scales[i]] \
                          for i in range(self.num_components)]
         score_range = (scores.min(),scores.max())
-        optimized_params = optimize_distributions(initialParmas, x_range=score_range)
+        optimized_params = optimize_distributions([tuple(param) for param in initialParmas], x_range=score_range)
         self.skewness = np.array([params[0] for params in optimized_params])
         self.locs = np.array([params[1] for params in optimized_params])
         self.scales = np.array([params[2] for params in optimized_params])
@@ -728,7 +725,7 @@ class MulticomponentCalibrationModel:
             groups[val].append(i)
         return groups
 
-    def _groups_from_onehot(self, sampleIndicators : np.array) -> Dict[int, List[int]]:
+    def _groups_from_onehot(self, sampleIndicators : np.ndarray) -> Dict[int, List[int]]:
         """
         Convert one-hot sample indicators to a dictionary of column indices and row indices.
         """
@@ -745,7 +742,7 @@ class MulticomponentCalibrationModel:
                     break
         return indices_dict
 
-    def _initialize_sample_weights(self, scores : np.array, sampleIndicators : np.array) -> None:
+    def _initialize_sample_weights(self, scores : np.ndarray, sampleIndicators : np.ndarray) -> None:
         """
         Initialize `sample_weights`.
 
@@ -767,7 +764,7 @@ class MulticomponentCalibrationModel:
         for sampleIdx, indices in sample_to_indices.items():
             self.sample_weights[sampleIdx] = np.mean(component_posteriors[indices], axis=0)
 
-    def get_component_density(self, scores : np.array, component_num : int, **kwargs) -> np.array:
+    def get_component_density(self, scores : np.ndarray, component_num : int, **kwargs) -> np.ndarray:
         """
         Get the density of the scores.
 
@@ -791,7 +788,7 @@ class MulticomponentCalibrationModel:
             return skewnorm.logpdf(scores, self.skewness[component_num], self.locs[component_num], self.scales[component_num])
         return skewnorm.pdf(scores, self.skewness[component_num], self.locs[component_num], self.scales[component_num])
     
-    def get_log_likelihood(self, scores : np.array, sampleIndicators : np.array, **kwargs) -> float:
+    def get_log_likelihood(self, scores : np.ndarray, sampleIndicators : np.ndarray, **kwargs) -> float:
         """
         Get the log_likelihood of the model.
 
@@ -819,27 +816,11 @@ class MulticomponentCalibrationModel:
             log_sample_weights[np.isinf(log_sample_weights)] = 0
             log_densities = np.array([self.get_component_density(scores[sampleIndices], compNum, log=True) \
                                       for compNum in range(self.num_components)])
-            log_likelihood = logsumexp(log_densities + log_sample_weights, axis=0).sum()
+            log_likelihood = np.array(logsumexp(log_densities + log_sample_weights, axis=0, return_sign=False)).sum()
             if np.isnan(log_likelihood) or np.isinf(log_likelihood):
                 raise ValueError("Log likelihood is NaN.")
             LL += log_likelihood
         return LL
-        raise NotImplementedError("Implement using the log-likelihood formula.")
-        log_likelihood = 0.0
-        for sampleNum, sampleIndices in self._groups_from_onehot(sampleIndicators).items():
-            if len(sampleIndices) == 0:
-                continue
-            L = np.array([self.sample_weights[sampleNum,compNum] * self.get_component_density(scores[sampleIndices], compNum) \
-                          for compNum in range(self.num_components) if self.sample_weights[sampleNum,compNum]]).sum(axis=0)
-            if np.isnan(L).any() or np.isinf(L).any():
-                raise ValueError("Identified likelihood with NaN or inf values.")
-            LL = np.log(L).sum()
-            if np.isinf(LL):
-                raise ValueError("Log likelihood is -inf.")
-            log_likelihood += LL
-        if np.isnan(log_likelihood) or np.isinf(log_likelihood):
-            raise ValueError("Log likelihood is NaN.")
-        return log_likelihood
     
     def get_sample_density(self, scores, sampleNum):
         """
@@ -971,7 +952,7 @@ class MulticomponentCalibrationModel:
         n_scores = len(scores)
         return np.arange(1,n_scores + 1) /  n_scores
 
-    def get_component_posteriors(self, scores : np.array, sampleIndicators : np.array, **kwargs) -> np.array:
+    def get_component_posteriors(self, scores : np.ndarray, sampleIndicators : np.ndarray, **kwargs) -> np.ndarray:
         """
         Get the component posteriors for each sample.
 
@@ -1003,7 +984,7 @@ class MulticomponentCalibrationModel:
             comp_posteriors[sampleIndices] = self._sample_component_posteriors(scores[sampleIndices], self.sample_weights[sampleNum], **kwargs)
         return comp_posteriors
     
-    def _sample_component_posteriors(self, sample_scores : np.array, sample_weights : np.array,**kwargs) -> np.array:
+    def _sample_component_posteriors(self, sample_scores : np.ndarray, sample_weights : np.ndarray,**kwargs) -> np.ndarray:
         """
         Get the posterior probabilities of each scores.
 
@@ -1037,7 +1018,7 @@ class MulticomponentCalibrationModel:
                     continue
                 numerators[compNum] = log_pdfs[compNum] + np.log(sample_weights[compNum])
             d = logsumexp(numerators, axis=0)
-            comp_posteriors = np.exp(numerators - d[None])
+            comp_posteriors = np.exp(numerators - d[None]) # type: ignore
             comp_posteriors[np.isnan(comp_posteriors)] = 0
             comp_posteriors = comp_posteriors.T
         else:
@@ -1085,7 +1066,7 @@ class MulticomponentCalibrationModel:
         # fit the model to the given assay scores and sample indicators
         self.fit(scores, sampleIndicators)
         # predict the probability of each sample being generated by each of the components
-        return self.predict(scores)
+        return self.predict(scores, sampleIndicators,**kwargs)
 
     def get_params(self):
         """
