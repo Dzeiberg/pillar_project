@@ -250,8 +250,14 @@ class Variant:
         self._init_variant_info(variant_info)
     
     def _init_variant_info(self, variant_info: pd.Series):
+        self.ID = None
+        self.simplified_consequence = None
+        self.clinvar_star =None
+        self.clinvar_sig = None
+        self.gnomad_MAF = None
+        self.auth_reported_score = None
         for k, v in variant_info.items():
-            setattr(self, k, v)
+            setattr(self, str(k), v)
         self.parse_gnomAD_MAF()
         self.parse_clinvar_sig()
         self.parse_consequences()
