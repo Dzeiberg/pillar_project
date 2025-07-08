@@ -35,7 +35,7 @@ def run_single_fit(scoreset_id, scoreset_filepath, save_dir,**kwargs):
     scoreset_filepath = Path(scoreset_filepath)
     if not scoreset_filepath.exists():
         raise FileNotFoundError(f"File {scoreset_filepath} not found")
-    scoreset = joblib.load(scoreset_filepath)
+    scoreset = Scoreset.from_json(scoreset_filepath)
     fit = Fit(scoreset)
     fit.run(COMPONENT_RANGE,**kwargs)
     save_dir.mkdir(parents=True, exist_ok=True)
